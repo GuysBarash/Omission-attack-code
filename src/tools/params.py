@@ -8,6 +8,8 @@ from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
 from sklearn.naive_bayes import GaussianNB
 import numpy as np
 
+not_my_data = set(dir())
+
 # Input generation:
 samples = 200
 dimensions = 2
@@ -62,7 +64,7 @@ adversarial_tactic = adversarial_tactics['std_ratio']
 
 # Attack
 budget = int(np.ceil(np.sqrt(samples * clusters)))
-repetitions = 3
+repetitions = 2
 attack_tactics = dict()
 attack_tactics['by_distance_from_adv'] = ('by_distance_from_adv',
                                           {
@@ -79,9 +81,15 @@ attack_tactics['greedy_search'] = ('greedy_search',
 attack_tactics['Genetic'] = ('Genetic',
                              {
                                  'generations': 1000,
-                                 'offsprings': 50,
-                                 'parents': 4,
-                                 'workload_handling': 'parallel',  # 'parallel', 'concurrent'
+                                 'offsprings': 40,
+                                 'parents': 3,
                              })
 
 attack_tactic = attack_tactics['Genetic']
+
+if True:
+    my_data = set(dir()) - not_my_data
+    my_data.remove('not_my_data')
+    itemized = dict()
+    for k in my_data:
+        itemized[k] = eval(k)
