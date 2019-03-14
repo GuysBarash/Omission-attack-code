@@ -55,10 +55,12 @@ clf = clfs['SVM_linear']
 
 # Adversarial sample placement
 adversarial_tactics = dict()
-adversarial_tactics['std_ratio'] = ('std_ratio',
+adversarial_tactics['std_ratio'] = ['std_ratio',
                                     {
                                         'DISTANCES': (7, 10),  # distance from red, distance from blue
-                                    })
+                                        'HEIGHT_RATIO': None,
+                                        'MAX_HEIGHT': 10,
+                                    }]
 
 adversarial_tactic = adversarial_tactics['std_ratio']
 

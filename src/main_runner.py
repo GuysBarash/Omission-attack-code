@@ -1,5 +1,6 @@
 import datetime
 import os
+import tools.misc as misc
 import sys
 import csv
 import time
@@ -159,10 +160,20 @@ def main_func(info):
             else:
                 random_seed = config['random_seed']
             np.random.seed(random_seed)
+            params['Random_seed'] = random_seed
             logger.log_print("Random seed in use: {}".format(random_seed))
             logger.log_print()
 
             del set_random_seed, random_seed
+
+        print_run_params = True
+        if print_run_params:
+            sr = pd.Series(params)
+            sr_path = os.path.join(paths['result_path'], 'PARAMS.json')
+            misc.to_json(sr, sr_path)
+
+            del sr, sr_path
+            del print_run_params
 
         del code_init
 
@@ -295,9 +306,17 @@ def main_func(info):
                 m = m['P2'] / m['P1']
                 adversary_pos_center['SLOPE'] = - 1.0 / m
                 adversary_pos_center['OFFSET'] = adversary_pos_center['P2'] - (
-                        adversary_pos_center['P2'] * adversary_pos_center['SLOPE'])
+                        adversary_pos_center['P1'] * adversary_pos_center['SLOPE'])
 
-                del m
+                center_point = (adversary_pos_center['P1'], adversary_pos_center['P2'])
+                cx = 1 + adversary_pos_center['P1']
+                cy = (cx * adversary_pos_center['SLOPE']) + adversary_pos_center['OFFSET']
+                new_point = (cx, cy)
+                cdist = misc.dist(center_point, new_point)
+                adversary_pos_center['increase_of_dist_with_each_x'] = cdist
+
+                del m, center_point, cx, cy, cdist
+
                 # Get min-max bounds
                 for p in data_cols:
                     adversary_pos_center['{}_min'.format(p)] = df[p].min()
@@ -308,22 +327,12 @@ def main_func(info):
                 for adversary in range(num_of_adversaries):
                     adv_pos = pd.Series(index=data_cols + ['label'])
                     adv_pos['label'] = 2
-                    while True:
 
-                        adv_pos['P1'] = np.random.uniform(low=adversary_pos_center['P1_min'] + 1.5,
-                                                          high=adversary_pos_center['P1_max'] - 1.5)
-                        adv_pos['P2'] = adv_pos['P1'] * adversary_pos_center['SLOPE'] + adversary_pos_center['OFFSET']
+                    desired_dist = tactic[1]['HEIGHT_RATIO'] * tactic[1]['MAX_HEIGHT']
+                    steps_needed = desired_dist / adversary_pos_center['increase_of_dist_with_each_x']
+                    adv_pos['P1'] = adversary_pos_center['P1'] + steps_needed
+                    adv_pos['P2'] = adv_pos['P1'] * adversary_pos_center['SLOPE'] + adversary_pos_center['OFFSET']
 
-                        is_good = True
-                        for p in data_cols:
-                            is_good = is_good \
-                                      and (
-                                              (True and adversary_pos_center['{}_min'.format(p)] < adv_pos[p]) and
-                                              adv_pos[
-                                                  p] <
-                                              adversary_pos_center['{}_max'.format(p)])
-                        if is_good:
-                            break
             del gen_adversarial
 
         del create_adv_input
@@ -922,11 +931,14 @@ if __name__ == '__main__':
             del set_random_seed, random_seed, user_seed
 
         info_vector = list()
-        for idx in range(20):
+        iters = 3
+        for idx in range(iters):
             cinfo = deepcopy(info_base)
             cinfo['idx'] = idx
             cinfo['paths']['result_path'] = (cinfo['paths']['result_path']).replace('@', str(idx))
             cinfo['config']['random_seed'] = np.random.randint(1, sys.maxint)
+
+            cinfo['params']['adversarial_tactic'][1]['HEIGHT_RATIO'] = float(idx) / float(iters - 1)
             info_vector.append(cinfo)
 
         del define_inputs
