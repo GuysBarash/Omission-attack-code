@@ -931,7 +931,7 @@ if __name__ == '__main__':
             del set_random_seed, random_seed, user_seed
 
         info_vector = list()
-        iters = 3
+        iters = 25
         for idx in range(iters):
             cinfo = deepcopy(info_base)
             cinfo['idx'] = idx
