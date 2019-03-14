@@ -735,7 +735,7 @@ def main_func(info):
                                 fig = plot.get_figure()
                                 fig.savefig(export_path_png)
                                 plt.close('all')
-                                del export_path_csv, export_path_png
+                                del export_path_csv, export_path_png, plot
                                 del export_evolution_data, result_summary
 
                         del attack_data, attack_sig, attack_info
@@ -887,7 +887,7 @@ def main_func(info):
         fig.savefig(outpath)
         plt.close('all')
 
-        del outname, outpath, plot, fig
+        del outname, outpath, fig
         del export_attacked_data
 
     code_fin = True
