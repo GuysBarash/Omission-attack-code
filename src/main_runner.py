@@ -452,6 +452,7 @@ def main_func(info):
             cols += ['Prob_Blue']
             cols += ['Prob_Red_rep_{}'.format(rep) for rep in range(repetitions)]
             cols += ['Prob_Red']
+            cols += ['WIN']
             cols += ['Score_on_test_rep_{}'.format(rep) for rep in range(repetitions)]
             cols += ['Score_on_test']
             info_curr_row = pd.Series(name=budget, index=cols)
@@ -474,6 +475,8 @@ def main_func(info):
                 budget].mean()
             info_result_vector.loc[budget, 'Prob_Red'] = info_result_vector.filter(regex=("Prob_Red_rep_[0-9]+")).loc[
                 budget].mean()
+
+            info_result_vector.loc[budget, 'WIN'] = info_result_vector.loc[budget, 'Prob_Blue'] >= 0.5
             info_result_vector.loc[budget, 'Score_on_test'] = \
                 info_result_vector.filter(regex=("Score_on_test_rep_[0-9]+")).loc[
                     budget].mean()
@@ -556,58 +559,62 @@ def main_func(info):
                         if attack_sig == 'greedy_search':
                             k = budget
                             workload = config.get('workload_handling', 'NULL')
+                            greedy_restarts = attack_info['iteration_budget']
+                            for current_restart_idx in range(1):
 
-                            for kidx in range(k):
-                                # Generate input
-                                input_vector = list()
-                                for item_idx, row in attack_df.iterrows():
-                                    pckg = dict()
-                                    pckg['idx'] = item_idx
-                                    pckg['row'] = row
-                                    pckg['attack_df'] = attack_df.drop([item_idx])
-                                    pckg['clf_tag'] = clf_tag
-                                    pckg['adv_pos'] = adv_pos
-                                    pckg['data_cols'] = data_cols
-                                    pckg['label_to_reduce'] = 1
-                                    pckg['logger'] = None
-                                    pckg['params'] = params
-                                    pckg['config'] = config
-                                    pckg['paths'] = paths
-                                    pckg['global_idx'] = global_idx
+                                for kidx in range(k):
+                                    # Generate input
+                                    input_vector = list()
+                                    for item_idx, row in attack_df.iterrows():
+                                        pckg = dict()
+                                        pckg['idx'] = item_idx
+                                        pckg['row'] = row
+                                        pckg['attack_df'] = attack_df.drop([item_idx])
+                                        pckg['clf_tag'] = clf_tag
+                                        pckg['adv_pos'] = adv_pos
+                                        pckg['data_cols'] = data_cols
+                                        pckg['label_to_reduce'] = 1
+                                        pckg['logger'] = None
+                                        pckg['params'] = params
+                                        pckg['config'] = config
+                                        pckg['paths'] = paths
+                                        pckg['global_idx'] = global_idx
 
-                                    input_vector.append(pckg)
+                                        input_vector.append(pckg)
 
-                                calculate_prob_of_each_removal = True
-                                if calculate_prob_of_each_removal:
-                                    result_vector = list()
-                                    tqdm_msg = '[{}]\tRound ({:>3}/{:>3})'.format(workload, int(kidx + 1), int(k))
+                                    calculate_prob_of_each_removal = True
+                                    if calculate_prob_of_each_removal:
+                                        result_vector = list()
+                                        tqdm_msg = '[{}]\tRound ({:>3}/{:>3})'.format(workload, int(kidx + 1), int(k))
 
-                                    if workload == 'concurrent':
-                                        for item_id in tqdm.tqdm(range(len(input_vector)), desc=tqdm_msg, ascii=True):
-                                            ret = get_prob_of_red(input_vector[item_id])
-                                            result_vector.append(ret)
-                                    if workload == 'parallel':
-                                        results = pool.imap(get_prob_of_red, input_vector)
-                                        for item_id in tqdm.tqdm(range(len(input_vector)), desc=tqdm_msg, ascii=True):
-                                            ret = results.next()
-                                            result_vector.append(ret)
+                                        if workload == 'concurrent':
+                                            for item_id in tqdm.tqdm(range(len(input_vector)), desc=tqdm_msg,
+                                                                     ascii=True):
+                                                ret = get_prob_of_red(input_vector[item_id])
+                                                result_vector.append(ret)
+                                        if workload == 'parallel':
+                                            results = pool.imap(get_prob_of_red, input_vector)
+                                            for item_id in tqdm.tqdm(range(len(input_vector)), desc=tqdm_msg,
+                                                                     ascii=True):
+                                                ret = results.next()
+                                                result_vector.append(ret)
 
-                                    del calculate_prob_of_each_removal
-                                    del ret, item_id, tqdm_msg
+                                        del calculate_prob_of_each_removal
+                                        del ret, item_id, tqdm_msg
 
-                                choose_point_to_remove = True
-                                if choose_point_to_remove:
-                                    prob_of_red = pd.Series(index=df.index)
-                                    for res in result_vector:
-                                        prob_of_red[res['idx']] = res['prob_of_red']
+                                    choose_point_to_remove = True
+                                    if choose_point_to_remove:
+                                        prob_of_red = pd.Series(index=df.index)
+                                        for res in result_vector:
+                                            prob_of_red[res['idx']] = res['prob_of_red']
 
-                                    best_idx_to_remove = prob_of_red.idxmin()
-                                    attack_df = attack_df.drop([best_idx_to_remove])
+                                        best_idx_to_remove = prob_of_red.idxmin()
+                                        attack_df = attack_df.drop([best_idx_to_remove])
 
-                                    del choose_point_to_remove
-                                    del res, best_idx_to_remove, prob_of_red
+                                        del choose_point_to_remove
+                                        del res, best_idx_to_remove, prob_of_red
 
-                            del k
+                                del k
 
                         if attack_sig == 'Genetic':
                             k = budget
@@ -850,18 +857,40 @@ def main_func(info):
 
                 calculate_results_for_current_budget = True
                 if calculate_results_for_current_budget:
-                    info_result_vector.loc[budget, 'Prob_Blue'] = \
-                        info_result_vector.filter(regex=("Prob_Blue_rep_[0-9]+")).loc[
-                            budget].mean()
-                    info_result_vector.loc[budget, 'Prob_Red'] = \
-                        info_result_vector.filter(regex=("Prob_Red_rep_[0-9]+")).loc[
-                            budget].mean()
+                    aggregation = params['aggregation_function']
+                    aggreg_func_blue = aggregation['aggreg_func_blue']
+                    aggreg_func_red = aggregation['aggreg_func_red']
+                    info_result_vector.loc[budget, 'Prob_Blue'] = aggreg_func_blue(
+                        info_result_vector.filter(regex="Prob_Blue_rep_[0-9]+").loc[
+                            budget])
+                    info_result_vector.loc[budget, 'Prob_Red'] = aggreg_func_red(
+                        info_result_vector.filter(regex="Prob_Red_rep_[0-9]+").loc[
+                            budget])
+
+                    info_result_vector.loc[budget, 'WIN'] = info_result_vector.loc[budget, 'Prob_Blue'] >= 0.5
+                    current_round_victory = info_result_vector.loc[budget, 'WIN']
 
                     info_result_vector.loc[budget, 'Score_on_test'] = \
-                        info_result_vector.filter(regex=("Score_on_test_rep_[0-9]+")).loc[
+                        info_result_vector.filter(regex="Score_on_test_rep_[0-9]+").loc[
                             budget].mean()
 
                     del calculate_results_for_current_budget
+
+                stop_condition_on_budget = True
+                if stop_condition_on_budget:
+                    if current_round_victory:
+                        logger.log_print("Victory was achieved with budget {}".format(budget))
+                        outpath = os.path.join(paths['result_path'], 'A_VICTORY_AT_{}'.format(budget))
+                        with open(outpath, 'w') as ffile:
+                            ffile.write("DONE.")
+                            ffile.close()
+
+                        if config['stop_on_success']:
+                            break
+
+                        del outpath, ffile
+
+                    del stop_condition_on_budget
 
         close_pool_if_needed = True
         if close_pool_if_needed:
@@ -931,14 +960,19 @@ if __name__ == '__main__':
             del set_random_seed, random_seed, user_seed
 
         info_vector = list()
-        iters = 25
-        for idx in range(iters):
+        max_iter = 24.0
+        iters = [22]
+        for idx in iters:
             cinfo = deepcopy(info_base)
             cinfo['idx'] = idx
             cinfo['paths']['result_path'] = (cinfo['paths']['result_path']).replace('@', str(idx))
             cinfo['config']['random_seed'] = np.random.randint(1, sys.maxint)
 
-            cinfo['params']['adversarial_tactic'][1]['HEIGHT_RATIO'] = float(idx) / float(iters - 1)
+            cinfo['params']['adversarial_tactic'][1]['HEIGHT_RATIO'] = float(idx) / max_iter
+
+            if cinfo['params']['attack_tactic'][0] == 'greedy_search':
+                cinfo['params']['repetitions'] = cinfo['params']['attack_tactic'][1]['iteration_budget']
+
             info_vector.append(cinfo)
 
         del define_inputs

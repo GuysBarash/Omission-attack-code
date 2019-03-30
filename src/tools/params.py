@@ -66,7 +66,24 @@ adversarial_tactic = adversarial_tactics['std_ratio']
 
 # Attack
 budget = int(np.ceil(np.sqrt(samples * clusters)))
-repetitions = 2
+
+aggregation_functions = dict()
+aggregation_functions['mean'] = {'key': 'mean',
+                                 'aggreg_func_blue': np.mean,
+                                 'aggreg_func_red': np.mean,
+                                 }
+aggregation_functions['optimistic'] = {'key': 'optimistic',
+                                       'aggreg_func_blue': np.max,
+                                       'aggreg_func_red': np.min,
+                                       }
+aggregation_functions['pessimistic'] = {'key': 'pessimistic',
+                                        'aggreg_func_blue': np.min,
+                                        'aggreg_func_red': np.max,
+                                        }
+aggregation_function = aggregation_functions['optimistic']
+
+repetitions = 1
+
 attack_tactics = dict()
 attack_tactics['by_distance_from_adv'] = ('by_distance_from_adv',
                                           {
@@ -76,8 +93,7 @@ attack_tactics['by_distance_from_adv'] = ('by_distance_from_adv',
 
 attack_tactics['greedy_search'] = ('greedy_search',
                                    {
-                                       'workload_handling': 'parallel',  # 'parallel', 'concurrent'
-                                       'iteration_budget': 1,
+                                       'iteration_budget': 6,
                                    })
 
 attack_tactics['Genetic'] = ('Genetic',
@@ -87,7 +103,7 @@ attack_tactics['Genetic'] = ('Genetic',
                                  'parents': 3,
                              })
 
-attack_tactic = attack_tactics['Genetic']
+attack_tactic = attack_tactics['greedy_search']
 
 if True:
     my_data = set(dir()) - not_my_data
