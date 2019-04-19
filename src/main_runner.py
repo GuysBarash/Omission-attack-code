@@ -227,20 +227,25 @@ def main_func(info):
                 test_df = test_df.sample(frac=1).reset_index(drop=True)
                 del col, idx, dimensions, clusters, clusters_std, centers_pos, samples, X, y
                 del tX, ty
+
             if params['type_of_input']['tag'] == 'poly':
                 dimensions = params['dimensions']
                 clusters = params['clusters']
                 samples = params['samples']
                 crange = params['type_of_input']['range']
                 points = np.random.uniform(low=crange[0], high=crange[1], size=(samples, dimensions))
+                tpoints = np.random.uniform(low=crange[0], high=crange[1], size=(samples, dimensions))
                 data_cols = ['P{}'.format(idx + 1) for idx in range(dimensions)]
                 df = pd.DataFrame(columns=data_cols + ['label'], dtype='float32')
+                test_df = pd.DataFrame(columns=data_cols + ['label'], dtype='float32')
                 for idx, col in enumerate(data_cols):
                     df[col] = points[:, idx]
+                    test_df[col] = tpoints[:, idx]
 
-                a, b, c, d = deepcopy(params['type_of_input']['a'], params['type_of_input']['b'],
-                                      params['type_of_input']['c'],
-                                      params['type_of_input']['d'], )
+                a, b, c, d = (params['type_of_input']['a'],
+                              params['type_of_input']['b'],
+                              params['type_of_input']['c'],
+                              params['type_of_input']['d'],)
 
                 def func(point):
                     ret = point['P2']
@@ -251,7 +256,10 @@ def main_func(info):
                     return ret > 0
 
                 df['label'] = df.apply(func, axis=1)
+                df = df.sample(frac=1).reset_index(drop=True)
 
+                test_df['label'] = test_df.apply(func, axis=1)
+                test_df = test_df.sample(frac=1).reset_index(drop=True)
                 del dimensions, clusters, samples, crange, points, idx, col
             del generate_synthetic_data
 
@@ -961,7 +969,7 @@ if __name__ == '__main__':
 
         info_vector = list()
         max_iter = 24.0
-        iters = [22]
+        iters = range(25)
         for idx in iters:
             cinfo = deepcopy(info_base)
             cinfo['idx'] = idx

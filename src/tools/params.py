@@ -34,7 +34,7 @@ type_of_inputs['poly'] = {
 }
 
 # Chosen data format
-type_of_input = type_of_inputs['2_blobs']
+type_of_input = type_of_inputs['poly']
 
 # Classefier
 clfs = dict()
@@ -98,12 +98,12 @@ attack_tactics['greedy_search'] = ('greedy_search',
 
 attack_tactics['Genetic'] = ('Genetic',
                              {
-                                 'generations': 1000,
+                                 'generations': 800,
                                  'offsprings': 40,
                                  'parents': 3,
                              })
 
-attack_tactic = attack_tactics['greedy_search']
+attack_tactic = attack_tactics['Genetic']
 
 if True:
     my_data = set(dir()) - not_my_data
