@@ -25,7 +25,7 @@ import sklearn.metrics as metrics
 from multiprocessing.pool import Pool
 import tqdm
 
-from sklearn.datasets.samples_generator import make_blobs
+from sklearn.datasets.samples_generator import make_blobs, make_moons
 
 define_functions = True
 if define_functions:
@@ -227,6 +227,32 @@ def main_func(info):
                 test_df = test_df.sample(frac=1).reset_index(drop=True)
                 del col, idx, dimensions, clusters, clusters_std, centers_pos, samples, X, y
                 del tX, ty
+
+            if params['type_of_input']['tag'] == '2_moons':
+                dimensions = params['dimensions']
+                clusters = params['clusters']
+                samples = params['samples']
+                test_ratio = params['test_size']
+                clusters_std = params['type_of_input']['cluster_std']
+                centers_pos = params['type_of_input']['centers']
+                data_cols = ['P{}'.format(idx + 1) for idx in range(dimensions)]
+                df = pd.DataFrame(columns=data_cols + ['label'], dtype='float32', index=range(clusters * samples))
+                test_df = pd.DataFrame(columns=data_cols + ['label'], dtype='float32',
+                                       index=range(int(test_ratio * clusters * samples)))
+
+                df[data_cols], df['label'] = make_moons(n_samples=clusters * samples)
+                test_df[data_cols], test_df['label'] = make_moons(n_samples=int(test_ratio * clusters * samples))
+
+                df = df.sample(frac=1).reset_index(drop=True)
+                test_df = test_df.sample(frac=1).reset_index(drop=True)
+
+                df['P1'] = (df['P1'] + 1.0) * 2 - 3.0
+                df['P2'] = (df['P2'] + 0.5) * 4 - 3.0
+
+                test_df['P1'] = (test_df['P1'] + 1.0) * 2 - 3.0
+                test_df['P2'] = (test_df['P2'] + 0.5) * 4 - 3.0
+
+                del dimensions, clusters, clusters_std, centers_pos, samples
 
             if params['type_of_input']['tag'] == 'poly':
                 dimensions = params['dimensions']

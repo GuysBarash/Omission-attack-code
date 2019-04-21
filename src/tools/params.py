@@ -1,12 +1,12 @@
-from sklearn.neural_network import MLPClassifier
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.svm import SVC
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
 from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.gaussian_process.kernels import RBF
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
 from sklearn.naive_bayes import GaussianNB
-import numpy as np
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
 
 not_my_data = set(dir())
 
@@ -34,7 +34,7 @@ type_of_inputs['poly'] = {
 }
 
 # Chosen data format
-type_of_input = type_of_inputs['poly']
+type_of_input = type_of_inputs['2_blobs']
 
 # Classefier
 clfs = dict()
@@ -49,9 +49,10 @@ clfs['KNN3'] = ('KNN3', KNeighborsClassifier(n_neighbors=3))
 clfs['KNN1'] = ('KNN1', KNeighborsClassifier(n_neighbors=1))
 clfs['AdaBoost'] = ('AdaBoost', AdaBoostClassifier())
 clfs['GaussianNB'] = ('GaussianNB', GaussianNB())
+clfs['MLPClassifier'] = ('MLPClassifier', MLPClassifier())
 
 # Chosen clf
-clf = clfs['SVM_linear']
+clf = clfs['MLPClassifier']
 
 # Adversarial sample placement
 adversarial_tactics = dict()
