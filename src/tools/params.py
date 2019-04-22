@@ -52,7 +52,7 @@ clfs['GaussianNB'] = ('GaussianNB', GaussianNB())
 clfs['MLPClassifier'] = ('MLPClassifier', MLPClassifier())
 
 # Chosen clf
-clf = clfs['MLPClassifier']
+clf = clfs['SVM_linear']
 
 # Adversarial sample placement
 adversarial_tactics = dict()

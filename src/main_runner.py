@@ -659,13 +659,14 @@ def main_func(info):
                             offsprings = attack_info['offsprings']
                             parents = attack_info['parents']
                             result_summary = pd.DataFrame(columns=['Gen', 'Best score'])
+                            results_memory = pd.DataFrame(columns=['idx', 'prob_of_blue', 'prob_of_red'])
 
                             # Generate original parents
                             generate_parents = True
                             if generate_parents:
                                 parents_dict = dict()
                                 for offspring in range(offsprings):
-                                    parent = attack_df.sample(k)
+                                    parent = attack_df.sample(k).sort_index()
                                     parents_dict[offspring] = parent
                                 del generate_parents
 
@@ -676,6 +677,7 @@ def main_func(info):
 
                                     # Generate inputs
                                     input_vector = list()
+                                    result_vector = list()
                                     for creature_idx, creature in parents_dict.iteritems():
                                         pckg = dict()
                                         pckg['idx'] = creature_idx
@@ -689,12 +691,19 @@ def main_func(info):
                                         pckg['config'] = config
                                         pckg['paths'] = paths
                                         pckg['global_idx'] = global_idx
-                                        input_vector.append(pckg)
+                                        pckg['HASH'] = hash(bytes(creature.index))
+
+                                        if pckg['HASH'] in results_memory.index:
+                                            ret = dict(results_memory.loc[pckg['HASH']])
+                                            result_vector.append(ret)
+
+                                        else:
+                                            input_vector.append(pckg)
 
                                     # simulate attacks
                                     simulate_attacks = True
                                     if simulate_attacks:
-                                        result_vector = list()
+
                                         tqdm_msg = '[{}]\tGeneration ({:>3}/{:>3})'.format(workload, int(gen + 1),
                                                                                            int(generations))
 
@@ -711,7 +720,12 @@ def main_func(info):
                                                 result_vector.append(ret)
 
                                         del simulate_attacks
-                                        del ret, item_id, tqdm_msg
+                                        del tqdm_msg
+
+                                    # Store results to memory
+                                    for res in result_vector:
+                                        creature_hash = hash(bytes(parents_dict[res['idx']].index))
+                                        results_memory.loc[creature_hash] = res
 
                                     # Create new generation
                                     create_new_gen = True
@@ -756,7 +770,7 @@ def main_func(info):
 
                                                 del mutate_offspring, items_dropped, mutation_pool
 
-                                            new_parents_dict[offspring_idx] = offspring
+                                            new_parents_dict[offspring_idx] = offspring.sort_index()
 
                                         for kt in parents_dict.keys():
                                             del parents_dict[kt]
