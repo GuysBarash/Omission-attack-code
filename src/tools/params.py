@@ -52,7 +52,7 @@ clfs['GaussianNB'] = ('GaussianNB', GaussianNB())
 clfs['MLPClassifier'] = ('MLPClassifier', MLPClassifier())
 
 # Chosen clf
-clf = clfs['SVM_linear']
+clf = clfs['KNN5']
 
 # Adversarial sample placement
 adversarial_tactics = dict()
@@ -66,7 +66,10 @@ adversarial_tactics['std_ratio'] = ['std_ratio',
 adversarial_tactic = adversarial_tactics['std_ratio']
 
 # Attack
-budget = int(np.ceil(np.sqrt(samples * clusters)))
+min_budget = 10
+max_budget = int(np.ceil(np.sqrt(samples * clusters)))
+budget_step = 3
+budget_range = range(min_budget, max_budget, budget_step)
 
 aggregation_functions = dict()
 aggregation_functions['mean'] = {'key': 'mean',

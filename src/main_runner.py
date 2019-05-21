@@ -63,7 +63,7 @@ if define_functions:
         config = pckg['config']
         params = pckg['params']
 
-        idx = pckg['idx']
+        parent_idx = pckg['parent_idx']
         data_cols = pckg['data_cols']
 
         clf_tag = pckg['clf_tag']
@@ -83,7 +83,7 @@ if define_functions:
 
         # Return
         ret_pckg = dict()
-        ret_pckg['idx'] = idx
+        ret_pckg['parent_idx'] = parent_idx
         ret_pckg['prob_of_red'] = prob_1
         ret_pckg['prob_of_blue'] = prob_0
         return ret_pckg
@@ -464,7 +464,7 @@ def main_func(info):
     # Attack and export data
     attack_and_export_data = True
     if attack_and_export_data:
-        info_possible_budget = range(1, params['budget'] + 1)
+        info_possible_budget = params['budget_range']
         repetitions = params['repetitions']
         info_result_vector = pd.DataFrame()
 
@@ -659,28 +659,58 @@ def main_func(info):
                             offsprings = attack_info['offsprings']
                             parents = attack_info['parents']
                             result_summary = pd.DataFrame(columns=['Gen', 'Best score'])
-                            results_memory = pd.DataFrame(columns=['idx', 'prob_of_blue', 'prob_of_red'])
+                            results_memory = pd.DataFrame(columns=['parent_idx', 'prob_of_blue', 'prob_of_red'])
 
                             # Generate original parents
                             generate_parents = True
                             if generate_parents:
                                 parents_dict = dict()
-                                for offspring in range(offsprings):
+                                for offspring in range(offsprings - 1):
                                     parent = attack_df.sample(k).sort_index()
                                     parents_dict[offspring] = parent
+
+                                # one of the parents is always KNN
+                                get_KNN_winner = True
+                                if get_KNN_winner:
+                                    def get_dist_func(p1, p2, data_cols):
+                                        ret = 0
+                                        ret += (p1[data_cols] - p2[data_cols])
+                                        ret = ret ** 2
+                                        ret = ret.sum()
+                                        ret = np.sqrt(ret)
+                                        return ret
+
+                                    tparent = attack_df.copy(deep=True)
+                                    tparent['dist_from_adv'] = tparent.apply(
+                                        lambda row: get_dist_func(row, adv_pos, data_cols),
+                                        axis=1)
+
+                                    tparent = tparent[tparent['label'] == 1.0]
+                                    tparent = tparent.sort_values(by=['dist_from_adv'], ascending=True)
+                                    tparent = tparent.iloc[0:k]
+                                    tparent = tparent.drop(columns=['dist_from_adv'])
+                                    tparent = tparent.sort_index()
+                                    parents_dict[offsprings - 1] = tparent
+
+                                    del tparent
+                                    del get_KNN_winner
+
                                 del generate_parents
 
                             # iterate generation
                             evolve = True
                             if evolve:
+                                curr_score = 0
                                 for gen in range(generations):
+                                    if curr_score > 0.8:
+                                        break
 
                                     # Generate inputs
                                     input_vector = list()
                                     result_vector = list()
                                     for creature_idx, creature in parents_dict.iteritems():
                                         pckg = dict()
-                                        pckg['idx'] = creature_idx
+                                        pckg['parent_idx'] = creature_idx
                                         pckg['creature'] = creature
                                         pckg['attack_df'] = attack_df
                                         pckg['clf_tag'] = clf_tag
@@ -695,6 +725,7 @@ def main_func(info):
 
                                         if pckg['HASH'] in results_memory.index:
                                             ret = dict(results_memory.loc[pckg['HASH']])
+                                            ret['parent_idx'] = creature_idx
                                             result_vector.append(ret)
 
                                         else:
@@ -704,8 +735,12 @@ def main_func(info):
                                     simulate_attacks = True
                                     if simulate_attacks:
 
-                                        tqdm_msg = '[{}]\tGeneration ({:>3}/{:>3})'.format(workload, int(gen + 1),
-                                                                                           int(generations))
+                                        tqdm_msg = '[{}][Score: {:>4.3f}][Budget: {:>4.3f}]\tGeneration ({:>3}/{:>3})'.format(
+                                            workload,
+                                            curr_score,
+                                            k,
+                                            int(gen + 1),
+                                            int(generations))
 
                                         if workload == 'concurrent':
                                             for item_id in tqdm.tqdm(range(len(input_vector)), desc=tqdm_msg,
@@ -724,7 +759,7 @@ def main_func(info):
 
                                     # Store results to memory
                                     for res in result_vector:
-                                        creature_hash = hash(bytes(parents_dict[res['idx']].index))
+                                        creature_hash = hash(bytes(parents_dict[res['parent_idx']].index))
                                         results_memory.loc[creature_hash] = res
 
                                     # Create new generation
@@ -732,17 +767,25 @@ def main_func(info):
                                     if create_new_gen:
                                         gendf = pd.DataFrame(result_vector)
                                         gendf = gendf.sort_values(by=['prob_of_blue'], ascending=False)
+
+                                        if curr_score > gendf.iloc[0]['prob_of_blue']:
+                                            print "BUG!!!"
+
                                         gendf = gendf.iloc[:parents]
 
                                         # Get winner
-                                        winner_creature = parents_dict[int(gendf.iloc[0]['idx'])]
+                                        winner_creature = parents_dict[int(gendf.iloc[0]['parent_idx'])]
                                         result_summary = result_summary.append(
                                             {'Gen': gen + 1, 'Best score': gendf.iloc[0]['prob_of_blue']},
                                             ignore_index=True)
 
+                                        curr_score = gendf.iloc[0]['prob_of_blue']
+
                                         new_parents_dict = dict()
                                         for parent in range(parents):
-                                            new_parents_dict[parent] = parents_dict[int(gendf.iloc[parent]['idx'])]
+                                            original_parent_idx = int(gendf.iloc[parent]['parent_idx'])
+                                            original_parent_item = parents_dict[original_parent_idx]
+                                            new_parents_dict[parent] = original_parent_item
 
                                         genepool = pd.DataFrame()
                                         for parent_idx, parent in new_parents_dict.iteritems():
@@ -770,10 +813,9 @@ def main_func(info):
 
                                                 del mutate_offspring, items_dropped, mutation_pool
 
-                                            new_parents_dict[offspring_idx] = offspring.sort_index()
+                                            offspring = offspring.sort_index()
+                                            new_parents_dict[offspring_idx] = offspring
 
-                                        for kt in parents_dict.keys():
-                                            del parents_dict[kt]
                                         parents_dict = new_parents_dict
 
                                         del create_new_gen, genepool
@@ -1009,7 +1051,7 @@ if __name__ == '__main__':
 
         info_vector = list()
         max_iter = 24.0
-        iters = range(25)
+        iters = [8, 10, 13, 15]
         for idx in iters:
             cinfo = deepcopy(info_base)
             cinfo['idx'] = idx
@@ -1023,7 +1065,7 @@ if __name__ == '__main__':
 
             info_vector.append(cinfo)
 
-        del define_inputs
+        del idx
 
 # Run code
 if __name__ == '__main__':
