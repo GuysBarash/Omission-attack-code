@@ -49,10 +49,10 @@ clfs['KNN3'] = ('KNN3', KNeighborsClassifier(n_neighbors=3))
 clfs['KNN1'] = ('KNN1', KNeighborsClassifier(n_neighbors=1))
 clfs['AdaBoost'] = ('AdaBoost', AdaBoostClassifier())
 clfs['GaussianNB'] = ('GaussianNB', GaussianNB())
-clfs['MLPClassifier'] = ('MLPClassifier', MLPClassifier())
+clfs['ANN'] = ('ANN', MLPClassifier(hidden_layer_sizes=(8, 8,)))
 
 # Chosen clf
-clf = clfs['KNN5']
+clf = clfs['SVM_linear']
 
 # Adversarial sample placement
 adversarial_tactics = dict()
@@ -102,9 +102,10 @@ attack_tactics['greedy_search'] = ('greedy_search',
 
 attack_tactics['Genetic'] = ('Genetic',
                              {
-                                 'generations': 800,
+                                 'generations': 1200,
                                  'offsprings': 40,
                                  'parents': 3,
+                                 'KNN_parent': False,
                              })
 
 attack_tactic = attack_tactics['Genetic']

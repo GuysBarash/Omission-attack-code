@@ -5,6 +5,7 @@ not_my_data = set(dir())
 work_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 src_path = os.path.join(work_path, 'src')
 result_path = os.path.join(work_path, 'results_@')
+data_path = os.path.join(work_path, 'data')
 
 if True:
     my_data = set(dir()) - not_my_data

@@ -672,28 +672,32 @@ def main_func(info):
                                 # one of the parents is always KNN
                                 get_KNN_winner = True
                                 if get_KNN_winner:
-                                    def get_dist_func(p1, p2, data_cols):
-                                        ret = 0
-                                        ret += (p1[data_cols] - p2[data_cols])
-                                        ret = ret ** 2
-                                        ret = ret.sum()
-                                        ret = np.sqrt(ret)
-                                        return ret
+                                    if attack_info['KNN_parent']:
+                                        def get_dist_func(p1, p2, data_cols):
+                                            ret = 0
+                                            ret += (p1[data_cols] - p2[data_cols])
+                                            ret = ret ** 2
+                                            ret = ret.sum()
+                                            ret = np.sqrt(ret)
+                                            return ret
 
-                                    tparent = attack_df.copy(deep=True)
-                                    tparent['dist_from_adv'] = tparent.apply(
-                                        lambda row: get_dist_func(row, adv_pos, data_cols),
-                                        axis=1)
+                                        tparent = attack_df.copy(deep=True)
+                                        tparent['dist_from_adv'] = tparent.apply(
+                                            lambda row: get_dist_func(row, adv_pos, data_cols),
+                                            axis=1)
 
-                                    tparent = tparent[tparent['label'] == 1.0]
-                                    tparent = tparent.sort_values(by=['dist_from_adv'], ascending=True)
-                                    tparent = tparent.iloc[0:k]
-                                    tparent = tparent.drop(columns=['dist_from_adv'])
-                                    tparent = tparent.sort_index()
-                                    parents_dict[offsprings - 1] = tparent
+                                        tparent = tparent[tparent['label'] == 1.0]
+                                        tparent = tparent.sort_values(by=['dist_from_adv'], ascending=True)
+                                        tparent = tparent.iloc[0:k]
+                                        tparent = tparent.drop(columns=['dist_from_adv'])
+                                        tparent = tparent.sort_index()
+                                        parents_dict[offsprings - 1] = tparent
 
-                                    del tparent
-                                    del get_KNN_winner
+                                        del tparent
+                                        del get_KNN_winner
+                                    else:
+                                        tparent = attack_df.sample(k).sort_index()
+                                        parents_dict[offsprings - 1] = tparent
 
                                 del generate_parents
 
@@ -758,9 +762,10 @@ def main_func(info):
                                         del tqdm_msg
 
                                     # Store results to memory
-                                    for res in result_vector:
-                                        creature_hash = hash(bytes(parents_dict[res['parent_idx']].index))
-                                        results_memory.loc[creature_hash] = res
+                                    if config['store_results']:
+                                        for res in result_vector:
+                                            creature_hash = hash(bytes(parents_dict[res['parent_idx']].index))
+                                            results_memory.loc[creature_hash] = res
 
                                     # Create new generation
                                     create_new_gen = True
