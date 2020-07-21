@@ -404,11 +404,12 @@ class Logger(object):
             Logger.fout = open(fout, 'w')
 
         Logger.log_t = Thread(target=Logger.logger_thread, args=(logger.log_queue,))
+        Logger.log_t.daemon = True
 
         record = "\n{}".format("Logger by Guy Barash")
         header = "--------------------------------------------------------------------------------"
-        print record
-        print header
+        print(record)
+        print(header)
         if (not (Logger.fout is None)) and (not Logger.fout.closed):
             Logger.fout.write("%s\n" % record)
             Logger.fout.write("%s\n" % header)
@@ -467,7 +468,7 @@ class Logger(object):
             # Determine time
             key = pckg.timer if pckg.timer in logger.timers.keys() else logger.defaultTimer
             timeDelta = (pckg.stamp - logger.timers[key])  # .total_seconds()
-            timeStamp = "{0:<15} ({1:>2})".format(timeDelta, key)
+            timeStamp = f"{timeDelta} ({key:>2})"
 
             # information level handling
             info_level_stamp = "{:^5}".format(pckg.level.name)
@@ -507,7 +508,7 @@ class Logger(object):
                             record += " {}".format(pckg.str)
 
                     if logger.console_enabled:
-                        print record
+                        print(record)
 
                     if (not (Logger.fout is None)) and (not Logger.fout.closed):
                         try:
@@ -515,7 +516,7 @@ class Logger(object):
                         except UnicodeDecodeError as e:
                             Logger.fout.write("{}\n".format(record))
             except Exception as e:
-                print "{} <Logger> pckg handling failed. dropping message. Error: \n{}".format(timeStamp, e)
+                print("{} <Logger> pckg handling failed. dropping message. Error: \n{}".format(timeStamp, e))
 
             if (pckg.flush is not None) and pckg.flush and (Logger.fout is not None):
                 Logger.fout.flush()

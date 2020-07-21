@@ -1,7 +1,7 @@
 not_my_data = set(dir())
 
 # type of workload handling (concurrent, parallel)
-workload_handling = 'concurrent'
+workload_handling = 'parallel'
 
 # Random seed, if "None" a random seed will be randomized
 random_seed = None

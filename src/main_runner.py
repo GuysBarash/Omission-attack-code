@@ -115,7 +115,7 @@ def main_func(info):
         if clear_paths:
             paths_to_remove = dict()
             paths_to_remove['results'] = paths['result_path']
-            for k, dir_path in paths_to_remove.iteritems():
+            for k, dir_path in paths_to_remove.items():
                 if os.path.exists(dir_path):
                     all_items_to_remove = [os.path.join(dir_path, f) for f in os.listdir(dir_path)]
                     for item_to_remove in all_items_to_remove:
@@ -134,7 +134,7 @@ def main_func(info):
             paths_dict['Root'] = paths['work_path']
             paths_dict['src'] = paths['src_path']
             paths_dict['results'] = paths['result_path']
-            for k, folder_path in paths_dict.iteritems():
+            for k, folder_path in paths_dict.items():
                 if not os.path.exists(folder_path):
                     os.makedirs(folder_path)
 
@@ -156,7 +156,7 @@ def main_func(info):
         set_random_seed = True
         if set_random_seed:
             if config['random_seed'] is None:
-                random_seed = np.random.randint(1, sys.maxint)
+                random_seed = np.random.randint(1, 2 ** 29)
             else:
                 random_seed = config['random_seed']
             np.random.seed(random_seed)
@@ -171,6 +171,7 @@ def main_func(info):
             sr = pd.Series(params)
             sr_path = os.path.join(paths['result_path'], 'PARAMS.json')
             misc.to_json(sr, sr_path)
+            logger.log_print("Attacking using method: {}".format(params['attack_tactic'][0]))
 
             del sr, sr_path
             del print_run_params
@@ -225,7 +226,7 @@ def main_func(info):
 
                 df = df.sample(frac=1).reset_index(drop=True)
                 test_df = test_df.sample(frac=1).reset_index(drop=True)
-                del col, idx, dimensions, clusters, clusters_std, centers_pos, samples, X, y
+                del dimensions, clusters, clusters_std, centers_pos, samples, X, y
                 del tX, ty
 
             if params['type_of_input']['tag'] == '2_moons':
@@ -397,7 +398,7 @@ def main_func(info):
             del df_xport, outpath, grouped, fname
 
         # Export classefier with new point untouched
-        plot_clf = True
+        plot_clf = params['plot_contour']
         if plot_clf:
             logger.log_print("calculating contour")
             outpath = os.path.join(paths['result_path'], 'clf_BASE.png')
@@ -449,7 +450,7 @@ def main_func(info):
             ax.scatter(X0, X1, c=y, cmap=plt.cm.coolwarm, s=20, edgecolors='k')
             ax.scatter(adv_pos['P1'], adv_pos['P2'], marker=markers[2])
             ax.set_xlim([-10, 10])
-            ax.set_ylim([-10, 10])
+            ax.set_ylcountim([-10, 10])
             ax.set_xlabel('P1')
             ax.set_ylabel('P2')
             ax.set_title(title)
@@ -712,7 +713,7 @@ def main_func(info):
                                     # Generate inputs
                                     input_vector = list()
                                     result_vector = list()
-                                    for creature_idx, creature in parents_dict.iteritems():
+                                    for creature_idx, creature in parents_dict.items():
                                         pckg = dict()
                                         pckg['parent_idx'] = creature_idx
                                         pckg['creature'] = creature
@@ -774,7 +775,8 @@ def main_func(info):
                                         gendf = gendf.sort_values(by=['prob_of_blue'], ascending=False)
 
                                         if curr_score > gendf.iloc[0]['prob_of_blue']:
-                                            print "BUG!!!"
+                                            print
+                                            "BUG!!!"
 
                                         gendf = gendf.iloc[:parents]
 
@@ -793,7 +795,7 @@ def main_func(info):
                                             new_parents_dict[parent] = original_parent_item
 
                                         genepool = pd.DataFrame()
-                                        for parent_idx, parent in new_parents_dict.iteritems():
+                                        for parent_idx, parent in new_parents_dict.items():
                                             genepool = genepool.append(parent)
                                         genepool = genepool[~genepool.index.duplicated(keep='first')]
 
@@ -887,7 +889,7 @@ def main_func(info):
                         del df_xport, outpath, grouped
 
                     # Export classefier with new point untouched
-                    plot_clf = True
+                    plot_clf = params['plot_contour']
                     if plot_clf:
                         logger.log_print("calculating contour")
                         outpath = os.path.join(paths['result_path'], 'clf_ATTACKED_{}.png'.format(curr_sig))
@@ -1047,7 +1049,7 @@ if __name__ == '__main__':
         if set_random_seed:
             user_seed = config.random_seed
             if user_seed is None:
-                random_seed = np.random.randint(1, sys.maxint)
+                random_seed = np.random.randint(1, 2 ** 29)
             else:
                 random_seed = user_seed
             np.random.seed(random_seed)
@@ -1056,12 +1058,12 @@ if __name__ == '__main__':
 
         info_vector = list()
         max_iter = 24.0
-        iters = [8, 10, 13, 15]
+        iters = range(1, 26)
         for idx in iters:
             cinfo = deepcopy(info_base)
             cinfo['idx'] = idx
             cinfo['paths']['result_path'] = (cinfo['paths']['result_path']).replace('@', str(idx))
-            cinfo['config']['random_seed'] = np.random.randint(1, sys.maxint)
+            cinfo['config']['random_seed'] = np.random.randint(1, 2 ** 29)
 
             cinfo['params']['adversarial_tactic'][1]['HEIGHT_RATIO'] = float(idx) / max_iter
 

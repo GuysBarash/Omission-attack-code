@@ -49,7 +49,7 @@ clfs['KNN3'] = ('KNN3', KNeighborsClassifier(n_neighbors=3))
 clfs['KNN1'] = ('KNN1', KNeighborsClassifier(n_neighbors=1))
 clfs['AdaBoost'] = ('AdaBoost', AdaBoostClassifier())
 clfs['GaussianNB'] = ('GaussianNB', GaussianNB())
-clfs['ANN'] = ('ANN', MLPClassifier(hidden_layer_sizes=(8, 8,)))
+clfs['ANN'] = ('ANN', MLPClassifier(hidden_layer_sizes=(4, 4,)))
 
 # Chosen clf
 clf = clfs['SVM_linear']
@@ -60,16 +60,16 @@ adversarial_tactics['std_ratio'] = ['std_ratio',
                                     {
                                         'DISTANCES': (7, 10),  # distance from red, distance from blue
                                         'HEIGHT_RATIO': None,
-                                        'MAX_HEIGHT': 10,
+                                        'MAX_HEIGHT': 25,
                                     }]
 
 adversarial_tactic = adversarial_tactics['std_ratio']
 
 # Attack
-min_budget = 10
+min_budget = 1
 max_budget = int(np.ceil(np.sqrt(samples * clusters)))
-budget_step = 3
-budget_range = range(min_budget, max_budget, budget_step)
+budget_step = 1
+budget_range = [max_budget]  # range(min_budget, max_budget, budget_step)
 
 aggregation_functions = dict()
 aggregation_functions['mean'] = {'key': 'mean',
@@ -97,7 +97,7 @@ attack_tactics['by_distance_from_adv'] = ('by_distance_from_adv',
 
 attack_tactics['greedy_search'] = ('greedy_search',
                                    {
-                                       'iteration_budget': 6,
+                                       'iteration_budget': 3,
                                    })
 
 attack_tactics['Genetic'] = ('Genetic',
@@ -105,10 +105,11 @@ attack_tactics['Genetic'] = ('Genetic',
                                  'generations': 1200,
                                  'offsprings': 40,
                                  'parents': 3,
-                                 'KNN_parent': False,
+                                 'KNN_parent': True,
                              })
 
-attack_tactic = attack_tactics['Genetic']
+attack_tactic = attack_tactics['greedy_search']
+plot_contour = False
 
 if True:
     my_data = set(dir()) - not_my_data

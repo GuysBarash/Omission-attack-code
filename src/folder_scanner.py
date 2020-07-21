@@ -3,7 +3,7 @@ import re
 import pandas as pd
 import numpy as np
 
-start_path = r'C:\school\Thesa\30032019 RUNS'
+start_path = r'C:\school\Thesa\27082019 RUNS'
 
 if __name__ == '__main__':
     df = pd.DataFrame()

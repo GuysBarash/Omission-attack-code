@@ -112,6 +112,21 @@ def attack(df, adv_p, attack_info, logger):
 
     info_result_vector = pd.DataFrame()
 
+    clear_paths = False
+    if clear_paths:
+
+        if os.path.exists(results_path):
+            if os.path.exists(results_path):
+                if not os.path.isdir(results_path):
+                    os.remove(results_path)
+                else:
+                    shutil.rmtree(results_path)
+
+        if not os.path.exists(results_path):
+            os.makedirs(results_path)
+
+        del clear_paths
+
     open_pool_if_needed = True
     if open_pool_if_needed:
         if workload == 'parallel':
@@ -360,7 +375,7 @@ def attack(df, adv_p, attack_info, logger):
                                 # Generate inputs
                                 input_vector = list()
                                 result_vector = list()
-                                for creature_idx, creature in parents_dict.iteritems():
+                                for creature_idx, creature in parents_dict.items():
                                     pckg = dict()
                                     pckg['parent_idx'] = creature_idx
                                     pckg['creature'] = creature
@@ -374,7 +389,7 @@ def attack(df, adv_p, attack_info, logger):
                                     pckg['to_label'] = to_label
                                     pckg['from_label'] = from_label
                                     pckg['global_idx'] = global_idx
-                                    pckg['HASH'] = hash(bytes(creature.index))
+                                    pckg['HASH'] = hash(str(creature.index))
 
                                     if pckg['HASH'] in results_memory.index:
                                         ret = dict(results_memory.loc[pckg['HASH']])
@@ -423,7 +438,7 @@ def attack(df, adv_p, attack_info, logger):
                                     gendf = gendf.sort_values(by=['prob_of_target'], ascending=False)
 
                                     if curr_score > gendf.iloc[0]['prob_of_target']:
-                                        print "BUG!!!"
+                                        print("BUG!!!")
 
                                     gendf = gendf.iloc[:parents]
 
@@ -453,7 +468,7 @@ def attack(df, adv_p, attack_info, logger):
                                         new_parents_dict[parent] = original_parent_item
 
                                     genepool = pd.DataFrame()
-                                    for parent_idx, parent in new_parents_dict.iteritems():
+                                    for parent_idx, parent in new_parents_dict.items():
                                         genepool = genepool.append(parent)
                                     genepool = genepool[~genepool.index.duplicated(keep='first')]
 
@@ -693,7 +708,7 @@ if __name__ == '__main__':
     if clear_paths:
         paths_to_remove = dict()
         paths_to_remove['data'] = paths['data_path']
-        for k, dir_path in paths_to_remove.iteritems():
+        for k, dir_path in paths_to_remove.items():
             if os.path.exists(dir_path):
                 all_items_to_remove = [os.path.join(dir_path, f) for f in os.listdir(dir_path)]
                 for item_to_remove in all_items_to_remove:
@@ -712,7 +727,7 @@ if __name__ == '__main__':
         paths_dict['Root'] = paths['work_path']
         paths_dict['src'] = paths['src_path']
         paths_dict['data'] = paths['data_path']
-        for k, folder_path in paths_dict.iteritems():
+        for k, folder_path in paths_dict.items():
             if not os.path.exists(folder_path):
                 os.makedirs(folder_path)
 
@@ -729,69 +744,105 @@ if __name__ == '__main__':
         del init_logger
 
 if __name__ == '__main__':
-    open_df = True
-    if open_df:
-        label_col = 'label'
-        csv_path = r"C:\school\thesis\omission\mnist\mnist_train.csv"
-        df = pd.read_csv(csv_path)
-        df = df.sample(frac=1)
-        relevant_labels = [3, 4]
-        df = df[df[label_col].isin(relevant_labels)]
-        df = df.iloc[0:200]
+    inputs = list()
+    for from_class in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]:
+        w = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        w.pop(from_class)
+        for to_class in w:
+            for iteration in range(4):
+                d = dict()
+                d['FROM'] = from_class
+                d['TO'] = to_class
+                d['ITER'] = iteration
+                d['outpath'] = paths['data_path'].replace('data',
+                                                          'from_{}_to_{}_iter_{}'.format(d['FROM'], d['TO'],
+                                                                                         d['ITER']))
 
-        del open_df
+                inputs.append(d)
 
-    find_hardest_samples = True
-    if find_hardest_samples:
-        clf_name, clf = params['clf']
-        clf.fit(df.drop([label_col], axis=1), df[label_col])
+    for d in inputs:
 
-        res = clf.predict_proba(df.drop([label_col], axis=1))
-        res = pd.DataFrame(res, index=df.index)
-        res['diff'] = np.abs(res[0] - res[1])
-        res = res.sort_values(by=['diff'])
-        top_n = 5
+        clear_paths = True
+        if clear_paths:
 
-        # Print top candidates
-        top_idx = res.iloc[0:top_n].index
-        for idx in top_idx:
-            img = df.loc[idx].drop(label_col)
-            label = df.loc[idx][label_col]
-            path = os.path.join(paths['data_path'], 'img_{}.png'.format(idx))
-            logger.log_print("Print suspect to {}".format(path))
-            title = '[prob of {l1}: {p1:>.2f}][prob of {l2}: {p2:>.2f}]'.format(
-                l1=relevant_labels[1], l2=relevant_labels[0],
-                p1=res.loc[idx][0], p2=res.loc[idx][1],
-            )
-            plot_sample(img, path, title=title)
+            if os.path.exists(d['outpath']):
+                if os.path.exists(d['outpath']):
+                    if not os.path.isdir(d['outpath']):
+                        os.remove(d['outpath'])
+                    else:
+                        shutil.rmtree(d['outpath'])
 
-        adv_idx = top_idx[0]
-        adv = df.loc[adv_idx]
-        xdf = df.drop(adv_idx)
-        xdf.reset_index(drop=True)
+            if not os.path.exists(d['outpath']):
+                os.makedirs(d['outpath'])
 
-        del find_hardest_samples
-        del res
+            del clear_paths
 
-    commit_attack = True
-    if commit_attack:
-        attack_info = dict()
-        attack_info['budget'] = int(np.ceil(np.sqrt(xdf.shape[0])))
-        attack_info['from_label'] = adv[label_col]
-        attack_info['to_label'] = [t for t in xdf[label_col].unique() if t != adv[label_col]][0]
-        attack_info['workload'] = 'parallel'  # 'parallel' , 'concurrent'
-        attack_info['repetitions'] = 1
-        attack_info['label_col'] = label_col
-        attack_info['data_cols'] = [t for t in adv.index if t != label_col]
-        attack_info['attack_tactic'] = params['attack_tactics']['Genetic']
-        attack_info['global_idx'] = 0
-        attack_info['store_results'] = False
-        attack_info['stop_on_success'] = True
-        attack_info['results_path'] = paths['data_path']
+        open_df = True
+        if open_df:
+            label_col = 'label'
+            csv_path = r"C:\school\thesis\omission\mnist\mnist_train.csv"
+            df = pd.read_csv(csv_path)
+            df = df.sample(frac=1)
+            relevant_labels = [d['FROM'], d['TO']]
+            df = df[df[label_col].isin(relevant_labels)]
+            df = df.iloc[0:200]
 
-        clf = params['clf'][1]
+            del open_df
 
-        attack(xdf, adv, attack_info, logger=logger)
+        find_hardest_samples = True
+        if find_hardest_samples:
+            clf_name, clf = params['clf']
+            clf.fit(df.drop([label_col], axis=1), df[label_col])
+
+            df_with_only_target_label = df[df[label_col] == d['FROM']]
+            res = clf.predict_proba(df_with_only_target_label.drop([label_col], axis=1))
+            res = pd.DataFrame(res, index=df_with_only_target_label.index)
+            res['diff'] = np.abs(res[0] - res[1])
+            res = res.sort_values(by=['diff'])
+            top_n = 5
+
+            # Print top candidates
+            top_idx = res.iloc[0:top_n].index
+            for idx in top_idx:
+                img = df.loc[idx].drop(label_col)
+                label = df.loc[idx][label_col]
+                path = os.path.join(d['outpath'], 'img_{}.png'.format(idx))
+                logger.log_print("Print suspect to {}".format(path))
+                title = '[prob of {l1}: {p1:>.2f}][prob of {l2}: {p2:>.2f}]'.format(
+                    l1=relevant_labels[1], l2=relevant_labels[0],
+                    p1=res.loc[idx][0], p2=res.loc[idx][1],
+                )
+                plot_sample(img, path, title=title)
+
+            adv_idx = top_idx[0]
+            adv = df.loc[adv_idx]
+            xdf = df.drop(adv_idx)
+            xdf.reset_index(drop=True)
+
+            del find_hardest_samples
+            del res, df_with_only_target_label
+
+        commit_attack = True
+        if commit_attack:
+            attack_info = dict()
+            attack_info['budget'] = int(np.ceil(np.sqrt(xdf.shape[0])))
+            attack_info['from_label'] = adv[label_col]
+            attack_info['to_label'] = [t for t in xdf[label_col].unique() if t != adv[label_col]][0]
+            attack_info['workload'] = 'parallel'  # 'parallel' , 'concurrent'
+            attack_info['repetitions'] = 1
+            attack_info['label_col'] = label_col
+            attack_info['data_cols'] = [t for t in adv.index if t != label_col]
+            attack_info['attack_tactic'] = params['attack_tactics']['Genetic']
+            attack_info['global_idx'] = 0
+            attack_info['store_results'] = False
+            attack_info['stop_on_success'] = True
+            attack_info['results_path'] = paths['data_path'].replace('data',
+                                                                     'from_{}_to_{}_iter_{}'.format(d['FROM'], d['TO'],
+                                                                                                    d['ITER']))
+
+            clf = params['clf'][1]
+
+            attack(xdf, adv, attack_info, logger=logger)
 
 if __name__ == '__main__':
     logger.log_print("END OF CODE")
