@@ -361,6 +361,15 @@ def func(info):
         samples['Y'] = X[:, 1]
         samples['C'] = y
 
+        number_of_test_samples = int(0.2 * info['samples'])
+        samples_test = pd.DataFrame(columns=['X', 'Y', 'C'], index=range(number_of_test_samples))
+        X_test, y_test = make_blobs(n_samples=number_of_test_samples, n_features=2,
+                                    centers=info['samples center'], cluster_std=info['samples std'],
+                                    )
+        samples_test['X'] = X_test[:, 0]
+        samples_test['Y'] = X_test[:, 1]
+        samples_test['C'] = y_test
+
     generate_adv_point = True
     if generate_adv_point:
         print("Generating Adv point")
@@ -414,6 +423,12 @@ def func(info):
         y_hat = clf_predict_proba(clf, clf_tag, adv_X)
         # print("Prediction: {}".format(y_hat))
         infosr['prob_of_adv_for_TRGT_before_attack'] = y_hat[0][info['TRGT idx']]
+
+        get_accuracy_on_test_before_attack = True
+        if get_accuracy_on_test_before_attack:
+            y_test_hat = clf_predict(clf, clf_tag, X_test)
+            accuracy_score = metrics.accuracy_score(y_test, y_test_hat)
+            infosr['accuracy_before_attack'] = accuracy_score
 
         plot_data = True
         if plot_data and add_plot:
@@ -502,6 +517,12 @@ def func(info):
         # print("Prediction: {}".format(y_hat))
         infosr['prob_of_adv_for_TRGT_after_attack'] = y_hat[0][info['TRGT idx']]
 
+        get_accuracy_on_test_before_attack = True
+        if get_accuracy_on_test_before_attack:
+            y_test_hat = clf_predict(clf, clf_tag, X_test)
+            accuracy_score = metrics.accuracy_score(y_test, y_test_hat)
+            infosr['accuracy_after_attack'] = accuracy_score
+
         plot_data = True
         if plot_data and add_plot:
             outpath = os.path.join(info['Outpath'], 'clf_ATTACKED.png')
@@ -568,7 +589,12 @@ def func(info):
         outpath = os.path.join(info['Outpath'], 'results.csv')
         infodf = pd.DataFrame(columns=infosr.index)
         infodf = infodf.append(infosr)
+        infodf = infodf.reindex(sorted(infodf.columns), axis=1)
         infodf.to_csv(outpath, header=True)
+
+
+def str2bool(s):
+    return s.lower() in ['true', 't', 'y', 'yes', '1']
 
 
 if __name__ == '__main__':
@@ -576,6 +602,9 @@ if __name__ == '__main__':
 
 if __name__ == '__main__':
     # make inputs
+    # CLFs: SVM, DTree, KNN5, Gaussian_NB, ANN
+    # Attacks: KNN, Greedy, Genetic
+
     info = dict()
     info['Start time'] = datetime.datetime.now()
     info['uid'] = np.random.randint(2 ** 25)
@@ -589,12 +618,13 @@ if __name__ == '__main__':
     info['samples'] = 400
     info['budget'] = int(np.ceil(np.sqrt(info['samples'])))
     info['difficulty'] = 0.3  # 0 is the easiest to attack
-    info['PLOT'] = sys.argv[3] if len(sys.argv) > 3 else False
+    info['PLOT'] = str2bool(sys.argv[3]) if len(sys.argv) > 3 else False
+    info['run_id'] = sys.argv[4] if len(sys.argv) > 4 else 'X'
 
     if info['PLOT']:
-        sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}__PLOT'
+        sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}_{info["run_id"]}__PLOT'
     else:
-        sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}'
+        sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}_{info["run_id"]}'
     info['Sig'] = sig
     info['Outpath'] = os.path.join(root_path, str(info['Sig']))
 

@@ -1,0 +1,1 @@
+taskkill.exe /F /IM python.exe /T
