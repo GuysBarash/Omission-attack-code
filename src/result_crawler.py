@@ -52,6 +52,7 @@ print(msg)
 attacks = summary['attack'].unique()
 clfs = summary['clf'].unique()
 edf = pd.DataFrame(columns=attacks, index=clfs)
+accuracy_drop_df = pd.DataFrame(columns=attacks, index=clfs)
 for attack in attacks:
     t = summary[summary['attack'] == attack]
     if t.shape[0] == 0:
@@ -84,8 +85,12 @@ for attack in attacks:
         msg += '\t'
         # msg += f'[Prob. {score_after:>.4f}]'
         msg += f'[Accuracy: {before_acc_mean:>.4f}+{before_in_acc_std:>.4f} -->  {after_acc_mean:>.4f}+{after_in_acc_std:>.4f}]'
+
         msg += f'[Accuracy drop: {drop_in_acc_mean:>.4f}+{drop_in_acc_std:>.4f}]'
         edf.loc[clf, attack] = success_rate
+
+        drop = u'{:>.3f}±{:>.3f}'.format(drop_in_acc_mean, drop_in_acc_std)
+        accuracy_drop_df.loc[clf, attack] = drop
         print(msg)
     print("")
 
@@ -99,10 +104,17 @@ for attack in attacks:
     print(msg)
     print('')
 
+print("")
 summary_fname = 'results.xlsx'
 summary_path = os.path.join(path, summary_fname)
 edf = edf[edf.columns.dropna()].dropna()
 edf.to_excel(summary_path)
-print("")
 print(f"Summary file: {summary_fname}")
+print(f"Exported to: {path}")
+
+summary_fname = 'accuracy drop.xlsx'
+summary_path = os.path.join(path, summary_fname)
+accuracy_drop_df = accuracy_drop_df[accuracy_drop_df.columns.dropna()].dropna()
+accuracy_drop_df.to_excel(summary_path)
+print(f"Accuracy file: {summary_fname}")
 print(f"Exported to: {path}")
