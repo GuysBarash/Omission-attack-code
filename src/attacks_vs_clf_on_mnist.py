@@ -373,6 +373,7 @@ def func(info):
         msg += f'## UID    : {info["uid"]:>8} ##' + "\n"
         msg += f'## PLOT   : {str(info["PLOT"]):>8} ##' + "\n"
         msg += f'## {src:^6} --> {trgt:^6} ##' + "\n"
+        msg += f'## {"RUN":^6} --> {info["run_id"]:^6} ##' + "\n"
         msg += '#######################' + "\n"
         msg += '#######################'
         print(msg)
@@ -399,6 +400,15 @@ def func(info):
             trgtdf['label'] = 0
             samples = pd.concat([srcdf, trgtdf])
             samples = samples.sample(frac=1)
+
+            # Test set
+            number_of_test_samples = int(0.2 * info['samples'])
+            srcdf_test = rawdf[rawdf['label'] == src].sample(int(number_of_test_samples / 2.0))
+            trgtdf_test = rawdf[rawdf['label'] == trgt].sample(int(number_of_test_samples / 2.0))
+            srcdf_test['label'] = 1
+            trgtdf_test['label'] = 0
+            samples_test = pd.concat([srcdf_test, trgtdf_test])
+            samples_test = samples_test.sample(frac=1)
 
             potential_adv_points = rawdf[rawdf['label'] == src].sample(250)
             potential_adv_points['label'] = 1
@@ -432,6 +442,15 @@ def func(info):
 
             else:
                 print(f"BAD prediction: {before_attack_prediction:>.5f} [phase 1]")
+
+    get_accuracy_before_attack = True
+    if get_accuracy_before_attack:
+        print(f"Checking accuracy")
+        S_test = samples_test
+        X_test, y_test = S_test[datacols], S_test[labelcol]
+        y_test_hat = clf_predict(clf, clf_tag, X_test)
+        accuracy_before_attack = metrics.accuracy_score(y_test, y_test_hat)
+        infosr['accuracy_before_attack'] = accuracy_before_attack
 
     run_clf_without_attack = True
     if run_clf_without_attack:
@@ -476,6 +495,15 @@ def func(info):
         # print("Prediction: {}".format(y_hat))
         infosr['prob_of_adv_for_TRGT_after_attack'] = y_hat[0][info['TRGT idx']]
 
+    get_accuracy_after_attack = True
+    if get_accuracy_after_attack:
+        print(f"Checking accuracy")
+        S_test = samples_test
+        X_test, y_test = S_test[datacols], S_test[labelcol]
+        y_test_hat = clf_predict(clf, clf_tag, X_test)
+        accuracy_after_attack = metrics.accuracy_score(y_test, y_test_hat)
+        infosr['accuracy_after_attack'] = accuracy_after_attack
+
     export_final_result = True
     if export_final_result:
         infosr['End time'] = datetime.datetime.now()
@@ -496,6 +524,12 @@ def func(info):
         infodf = pd.DataFrame(columns=infosr.index)
         infodf = infodf.append(infosr)
         infodf.to_csv(outpath, header=True)
+        print("")
+        print(f"Output report at: {outpath}")
+
+
+def str2bool(s):
+    return s.lower() in ['true', 't', 'y', 'yes', '1']
 
 
 if __name__ == '__main__':
@@ -508,17 +542,18 @@ if __name__ == '__main__':
     info['uid'] = np.random.randint(2 ** 25)
     info['SRC idx'] = 1
     info['TRGT idx'] = 0
-    info['clf'] = sys.argv[1] if len(sys.argv) > 1 else 'ANN'
+    info['clf'] = sys.argv[1] if len(sys.argv) > 1 else 'SVM'
     info['Attack'] = sys.argv[2] if len(sys.argv) > 1 else 'KNN'
     info['samples'] = 400
     info['budget'] = int(np.ceil(np.sqrt(info['samples'])))
     info['adv prob of src thresholds'] = (0.56, 0.95)
-    info['PLOT'] = sys.argv[3] if len(sys.argv) > 3 else True
+    info['PLOT'] = str2bool(sys.argv[3]) if len(sys.argv) > 3 else False
+    info['run_id'] = sys.argv[4] if len(sys.argv) > 4 else 'X'
 
     if info['PLOT']:
-        sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}__PLOT'
+        sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}_{info["run_id"]}__PLOT'
     else:
-        sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}'
+        sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}_{info["run_id"]}'
     info['Sig'] = sig
     info['Outpath'] = os.path.join(root_path, str(info['Sig']))
 
