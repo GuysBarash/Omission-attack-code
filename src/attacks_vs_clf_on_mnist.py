@@ -59,6 +59,7 @@ def clf_fit(clf, clf_tag, X, y, verbose=False):
         y0 = 1 - y
         y1 = y
         y2d = np.array([y0, y1]).T
+        y2d = y2d.astype(np.float64)
 
         class haltCallback(tf.keras.callbacks.Callback):
             def on_epoch_end(self, epoch, logs={}):
@@ -410,7 +411,8 @@ def func(info):
             samples_test = pd.concat([srcdf_test, trgtdf_test])
             samples_test = samples_test.sample(frac=1)
 
-            potential_adv_points = rawdf[rawdf['label'] == src].sample(250)
+            sample_size = 3000
+            potential_adv_points = rawdf[rawdf['label'] == src].sample(sample_size)
             potential_adv_points['label'] = 1
             datacols = samples.columns[1:]
             labelcol = samples.columns[0]
@@ -421,14 +423,27 @@ def func(info):
             clf = clf_fit(clf, clf_tag, X, y, verbose=False)
 
             # Choose adv point
-            y_hat = clf_predict_proba(clf, clf_tag, potential_adv_points[datacols])
-            y_hat = y_hat[y_hat[:, 1] > info['adv prob of src thresholds'][0]]
-            y_hat = y_hat[y_hat[:, 1] < info['adv prob of src thresholds'][1]]
+            y_hat_o = clf_predict_proba(clf, clf_tag, potential_adv_points[datacols])
+            y_hat_o = pd.DataFrame(index=potential_adv_points.index, columns=[0, 1], data=y_hat_o)
+            y_hat_o = y_hat_o.sort_values(by=[1])
+            y_hat = y_hat_o.copy()
+            y_hat = y_hat[y_hat[1] > info['adv prob of src thresholds'][0]]
+            y_hat = y_hat[y_hat[1] < info['adv prob of src thresholds'][1]]
             if y_hat.shape[0] <= 0:
+                lower_than_threshold_y_hat = y_hat_o[y_hat_o[1] <= info['adv prob of src thresholds'][0]]
+                closest_from_below = lower_than_threshold_y_hat[1].max()
+                higher_than_threshold_y_hat = y_hat_o[y_hat_o[1] >= info['adv prob of src thresholds'][1]]
+                closest_from_above = higher_than_threshold_y_hat[1].min()
+                msg = ''
+                msg += 'closest value from below: {} < {}\n'.format(closest_from_below,
+                                                                    info['adv prob of src thresholds'][0])
+                msg += 'closest value from above: {} < {}\n'.format(closest_from_above,
+                                                                    info['adv prob of src thresholds'][1])
+                print(msg)
                 print(f"BAD prediction, retry [phase 0][Attempt: {attempt_idx + 1:>3}]")
                 continue
 
-            adv_point = potential_adv_points.iloc[y_hat[:, 1].argmin()]
+            adv_point = potential_adv_points.loc[y_hat[1].idxmin()]
             adv_X = adv_point[datacols]
             y_hat = clf_predict_proba(clf, clf_tag, (adv_X,))
             before_attack_prediction = y_hat[0][info['TRGT idx']]

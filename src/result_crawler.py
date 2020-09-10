@@ -4,7 +4,8 @@ import re
 import pandas as pd
 from tqdm import tqdm
 
-path = r"C:\school\thesis\clf vs learner"
+# path = r"C:\school\thesis\clf vs learner"
+path = r"C:\school\thesis\clf vs learner MNIST"  # MNIST MODE
 dirs = [o for o in os.listdir(path)
         if os.path.isdir(os.path.join(path, o))]
 
