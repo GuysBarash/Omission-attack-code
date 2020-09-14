@@ -39,6 +39,7 @@ import matplotlib.pyplot as plt
 
 import sklearn.metrics as metrics
 import tqdm
+import re
 
 from sklearn.datasets.samples_generator import make_blobs
 
@@ -358,7 +359,13 @@ def func(info):
         colors = {info['TRGT idx']: 'blue', info['SRC idx']: 'red', 2: 'yellow'}
         markers = {info['TRGT idx']: 'o', info['SRC idx']: 'o', 2: 'X'}
         labels = {info['TRGT idx']: 'TRGT', info['SRC idx']: 'SRC', 2: 'ADV'}
-        trgt, src = np.random.choice(range(10), size=2, replace=False)
+
+        if info.get('trgt src', None) is not None:
+            print("src / trgt given as input")
+            trgt, src = info.get('trgt src')
+        else:
+            print("src / trgt selected at random")
+            trgt, src = np.random.choice(range(10), size=2, replace=False)
         labels_real_number = {'TRGT': trgt, 'SRC': src, 'adv': 999}
         infosr = pd.Series(name=info['Sig'])
         add_plot = info['PLOT']
@@ -547,8 +554,15 @@ def str2bool(s):
     return s.lower() in ['true', 't', 'y', 'yes', '1']
 
 
+def str2tuple(s):
+    if s is None:
+        return s
+    else:
+        return [int(t) for t in re.findall(r'([0-9]+)', sys.argv[5])]
+
+
 if __name__ == '__main__':
-    root_path = r'C:\school\thesis\clf vs learner MNIST'
+    root_path = r'C:\school\thesis\clf labels compare MNIST'
 
 if __name__ == '__main__':
     # make inputs
@@ -564,11 +578,18 @@ if __name__ == '__main__':
     info['adv prob of src thresholds'] = (0.56, 0.95)
     info['PLOT'] = str2bool(sys.argv[3]) if len(sys.argv) > 3 else False
     info['run_id'] = sys.argv[4] if len(sys.argv) > 4 else 'X'
+    info['trgt src'] = str2tuple(sys.argv[5] if len(sys.argv) > 5 else None)
+
+    sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}_{info["run_id"]}'
+    if info['trgt src'] is not None:
+        trgt, src = info.get('trgt src')
+        sig += f'_{trgt}_{src}'
+    else:
+        sig += f'_X_X'
 
     if info['PLOT']:
-        sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}_{info["run_id"]}__PLOT'
-    else:
-        sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}_{info["run_id"]}'
+        sig += f'__PLOT'
+
     info['Sig'] = sig
     info['Outpath'] = os.path.join(root_path, str(info['Sig']))
 
