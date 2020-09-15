@@ -46,6 +46,46 @@ from sklearn.datasets.samples_generator import make_blobs
 UID = np.random.randint(2 ** 20)
 
 
+class Clock:
+    def __init__(self):
+        self.time = dict()
+        self.time['Global'] = datetime.datetime.now()
+        self.last_start = None
+
+        self.results = dict()
+
+    def start(self, key):
+        self.time[key] = datetime.datetime.now()
+        self.last_start = key
+
+    def stop(self, key=None):
+        if key is None:
+            key = self.last_start
+
+        self.results[key] = datetime.datetime.now() - self.time[key]
+
+    def get(self, key=None, exact=False, resample=False):
+        if key is None:
+            key = self.last_start
+
+        if resample or key not in self.results:
+            self.stop(key)
+
+        delta = self.results[key]
+        delta_in_minutes = delta.total_seconds() / 60
+        if exact:
+            return delta
+        else:
+            return delta_in_minutes
+        return None
+
+    def get_global(self):
+        return self.get(key='Global')
+
+
+clock = Clock()
+
+
 def plot_sample(img, path, title=None):
     mat = img.values.reshape((28, 28))
     if title is not None:
@@ -346,6 +386,12 @@ def attack_genetic(S, sa, budget, src_label, trgt_label, clf_tag, datacols, labe
         if logbook[-1]['max'] > 0.55:
             break
 
+        attack_time = clock.get(resample=True)
+        timecap = info.get('timcap_minutes', 99999)
+        if attack_time > timecap:
+            print(f"<<< Attack has excceeded {timecap} minutes. Exiting.")
+            exit(5)
+
     winner_creature = halloffame.items[0]
     Sk_indexes = list(winner_creature)
     Stag = S.drop(index=Sk_indexes)
@@ -353,8 +399,11 @@ def attack_genetic(S, sa, budget, src_label, trgt_label, clf_tag, datacols, labe
 
 
 def func(info):
+    global clock
+
     config_stuff = True
     if config_stuff:
+        clock.start('config')
         clear_folder(info['Outpath'])
         colors = {info['TRGT idx']: 'blue', info['SRC idx']: 'red', 2: 'yellow'}
         markers = {info['TRGT idx']: 'o', info['SRC idx']: 'o', 2: 'X'}
@@ -389,6 +438,8 @@ def func(info):
     generate_data = True
     if generate_data:
         print("Generating data")
+        clock.stop()
+        clock.start('Generating data')
 
         # Label 0 is TRGT \ BLUE
         # Label 1 is SRC \ RED
@@ -468,6 +519,9 @@ def func(info):
     get_accuracy_before_attack = True
     if get_accuracy_before_attack:
         print(f"Checking accuracy")
+        clock.stop()
+        clock.start('Checking accuracy')
+
         S_test = samples_test
         X_test, y_test = S_test[datacols], S_test[labelcol]
         y_test_hat = clf_predict(clf, clf_tag, X_test)
@@ -491,6 +545,9 @@ def func(info):
     apply_attack = True
     if apply_attack:
         print("Attacking!")
+        clock.stop()
+        clock.start('Attacking')
+
         S = samples[samples[labelcol] != 2]
         sa = samples[samples[labelcol] == 2][datacols].iloc[0]
         if info['Attack'] == 'KNN':
@@ -507,6 +564,7 @@ def func(info):
 
     run_clf_after_attack = True
     if run_clf_after_attack:
+        clock.start('run clf after attack')
         clf = get_clf(info['clf'])
         adv_X = samples[samples[labelcol] == 2][datacols]
         X, y = Shat[datacols], Shat[labelcol]
@@ -520,6 +578,8 @@ def func(info):
     get_accuracy_after_attack = True
     if get_accuracy_after_attack:
         print(f"Checking accuracy")
+        clock.stop()
+        clock.start('Checking accuracy')
         S_test = samples_test
         X_test, y_test = S_test[datacols], S_test[labelcol]
         y_test_hat = clf_predict(clf, clf_tag, X_test)
@@ -528,6 +588,8 @@ def func(info):
 
     export_final_result = True
     if export_final_result:
+        clock.stop()
+        clock.start('Exporting')
         infosr['End time'] = datetime.datetime.now()
         infosr['Duration'] = infosr['End time'] - infosr['Start time']
 
@@ -562,7 +624,7 @@ def str2tuple(s):
 
 
 if __name__ == '__main__':
-    root_path = r'C:\school\thesis\clf labels compare MNIST'
+    root_path = r'C:\school\thesis\clf vs learner MNIST'
 
 if __name__ == '__main__':
     # make inputs
@@ -575,11 +637,12 @@ if __name__ == '__main__':
     info['Attack'] = sys.argv[2] if len(sys.argv) > 1 else 'KNN'
     info['samples'] = 400
     info['budget'] = int(np.ceil(np.sqrt(info['samples'])))
-    info['adv prob of src thresholds'] = (0.56, 0.95)
+    # info['adv prob of src thresholds'] = (0.56, 0.95) # Susceptible mode
+    info['adv prob of src thresholds'] = (0.98, 1.00)  # Robust mode
     info['PLOT'] = str2bool(sys.argv[3]) if len(sys.argv) > 3 else False
     info['run_id'] = sys.argv[4] if len(sys.argv) > 4 else 'X'
     info['trgt src'] = str2tuple(sys.argv[5] if len(sys.argv) > 5 else None)
-
+    info['timcap_minutes'] = 30
     sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}_{info["run_id"]}'
     if info['trgt src'] is not None:
         trgt, src = info.get('trgt src')

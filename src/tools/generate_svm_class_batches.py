@@ -16,7 +16,7 @@ def build_batch(python_path, src_file, clf, attack, trgt, src, repeats=50):
 
 if __name__ == '__main__':
     labels = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    attacks = ['KNN']
+    attacks = ['Genetic', 'KNN']
     clfs = ['SVM']
     repeats = 50
     python_path = r'C:\Python37\python.exe'
