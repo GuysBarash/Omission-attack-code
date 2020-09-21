@@ -638,7 +638,7 @@ if __name__ == '__main__':
     info['samples'] = 400
     info['budget'] = int(np.ceil(np.sqrt(info['samples'])))
     # info['adv prob of src thresholds'] = (0.56, 0.95) # Susceptible mode
-    info['adv prob of src thresholds'] = (0.98, 1.00)  # Robust mode
+    info['adv prob of src thresholds'] = (0.98, 1.01)  # Robust mode
     info['PLOT'] = str2bool(sys.argv[3]) if len(sys.argv) > 3 else False
     info['run_id'] = sys.argv[4] if len(sys.argv) > 4 else 'X'
     info['trgt src'] = str2tuple(sys.argv[5] if len(sys.argv) > 5 else None)
