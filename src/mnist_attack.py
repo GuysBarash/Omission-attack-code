@@ -252,7 +252,7 @@ def attack(df, adv_p, attack_info, logger):
 
                     if attack_sig == 'greedy_search':
                         k = budget
-                        workload = config.get('workload_handling', 'NULL')
+                        workload = config.get_similarities('workload_handling', 'NULL')
                         greedy_restarts = attack_info['iteration_budget']
                         for current_restart_idx in range(1):
 

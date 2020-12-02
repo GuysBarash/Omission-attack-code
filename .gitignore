@@ -2,6 +2,7 @@
 *.txt
 *.png
 *.csv
+*.jpg
 *.xml
 *.iml
 *.json

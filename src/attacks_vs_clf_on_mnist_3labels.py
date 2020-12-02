@@ -410,9 +410,9 @@ def func(info):
         markers = {info['TRGT idx']: 'o', info['SRC1 idx']: 'o', info['SRC2 idx']: 'o', 3: 'X'}
         labels = {info['TRGT idx']: 'TRGT', info['SRC1 idx']: 'SRC1', info['SRC2 idx']: 'SRC2', 3: 'ADV'}
 
-        if info.get('trgt src', None) is not None:
+        if info.get_similarities('trgt src', None) is not None:
             print("src / trgt given as input")
-            trgt, src1, src2 = info.get('trgt src')
+            trgt, src1, src2 = info.get_similarities('trgt src')
         else:
             print("src / trgt selected at random")
             trgt, src1, src2 = np.random.choice(range(10), size=3, replace=False)

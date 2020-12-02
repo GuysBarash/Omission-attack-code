@@ -66,7 +66,7 @@ if __name__ == '__main__' and False:
 
 if __name__ == '__main__':
     attacks = ['Genetic', 'KNN']
-    clfs = ['SVM', 'KNN', 'ANN']
+    clfs = ['SVM', 'KNN5', 'ANN', 'DTree']
     repeats = 50
     python_path = r'C:\Python37\python.exe'
     src_file = r'C:/school/thesis/omission/src/attacks_vs_clf_on_mnist_3labels.py'

@@ -472,7 +472,7 @@ def main_func(info):
         open_pool_if_needed = True
         if open_pool_if_needed:
             attack_info = params['attack_tactic'][1]
-            if config.get('workload_handling', 'NULL') == 'parallel':
+            if config.get_similarities('workload_handling', 'NULL') == 'parallel':
                 logger.log_print("Opening pool")
                 pool = Pool()
                 logger.log_print("Pool opened.")
@@ -593,7 +593,7 @@ def main_func(info):
 
                         if attack_sig == 'greedy_search':
                             k = budget
-                            workload = config.get('workload_handling', 'NULL')
+                            workload = config.get_similarities('workload_handling', 'NULL')
                             greedy_restarts = attack_info['iteration_budget']
                             for current_restart_idx in range(1):
 
@@ -653,7 +653,7 @@ def main_func(info):
 
                         if attack_sig == 'Genetic':
                             k = budget
-                            workload = config.get('workload_handling', 'NULL')
+                            workload = config.get_similarities('workload_handling', 'NULL')
 
                             generations = attack_info['generations']
                             mutation_rate = 1.0 / k
@@ -992,7 +992,7 @@ def main_func(info):
         close_pool_if_needed = True
         if close_pool_if_needed:
             attack_info = params['attack_tactic'][1]
-            if config.get('workload_handling', 'NULL') == 'parallel':
+            if config.get_similarities('workload_handling', 'NULL') == 'parallel':
                 pool.close()
             del close_pool_if_needed
 
