@@ -167,29 +167,48 @@ def experiment_instance(randomseed=0):
             return similarities
 
     class Learner:
-        def __init__(self, transform):
-            self.model = None
+        def __init__(self, transform, model_type='alexnet'):
             self.transform = transform
-            self.model = models.resnet18(pretrained=True)
+            self.model = None
+            self.model_type = model_type
             self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-        def reset(self, seed=0):
+        def reset(self, seed=0, ):
             torch.cuda.empty_cache()
             torch.manual_seed(seed)
             np.random.seed(seed)
+            num_classes = 2
+            print(f"[Training using: {self.model_type}]")
 
-            # self.model = models.resnet152(pretrained=True)
-            self.model = models.resnet18(pretrained=True)
-            for param in self.model.parameters():
-                param.requires_grad = False
+            if self.model_type == 'resnet18':
+                self.model = models.resnet18(pretrained=True)
+                for param in self.model.parameters():
+                    param.requires_grad = False
+                num_ftrs = self.model.fc.in_features
+                self.model.fc = nn.Linear(num_ftrs, num_classes)
+            elif self.model_type == 'alexnet':
+                self.model = models.alexnet(pretrained=True)
+                for param in self.model.parameters():
+                    param.requires_grad = False
+                num_ftrs = self.model.classifier[6].in_features
+                self.model.classifier[6] = nn.Linear(num_ftrs, num_classes)
+            elif self.model_type == 'vgg11':
+                self.model = models.vgg11_bn(pretrained=True)
+                for param in self.model.parameters():
+                    param.requires_grad = False
+                num_ftrs = self.model.classifier[6].in_features
+                self.model.classifier[6] = nn.Linear(num_ftrs, num_classes)
 
-            num_ftrs = self.model.fc.in_features
-            self.model.fc = nn.Linear(num_ftrs, 2)
+            else:
+                print("ERROR IN MODEL SELECTION")
+
             self.model = self.model.to(self.device)
             self.criterion = nn.CrossEntropyLoss()
             self.optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
 
-        def train(self, traindata, vlddata=None, advdata=None, epochs=1, randomSeed=0):
+        def train(self, traindata, vlddata=None, advdata=None, epochs=1, randomSeed=0,
+                  batch_size=512,
+                  ):
             self.reset(seed=randomSeed)
 
             if type(traindata) is str:
@@ -199,6 +218,7 @@ def experiment_instance(randomseed=0):
                 vlddata = torchvision.datasets.ImageFolder(vlddata, transform=self.transform)
 
             train_time_start = datetime.now()
+            print(f"[Train size: {len(traindata)}][Batch size: {batch_size}]")
             for epoch in range(epochs):
                 epoch_time_start = datetime.now()
                 samples = list()
@@ -211,30 +231,35 @@ def experiment_instance(randomseed=0):
                 c = list(zip(samples, labels))
                 np.random.shuffle(c)
                 samples, labels = zip(*c)
-                # samples, labels = samples[:10], labels[:10]
-                samples = torch.stack(samples)
-                labels = torch.Tensor(labels)
-                samples = samples.to(self.device)
-                labels = labels.to(self.device)
+                train_loss = 0
+                train_acc = 0
+                # samples = samples[:10] # DEBUG LINE
+                for batch_idx, batch_start_idx in enumerate(np.arange(0, len(samples), batch_size)):
+                    batch_samples = samples[batch_start_idx:batch_start_idx + batch_size]
+                    batch_labels = labels[batch_start_idx:batch_start_idx + batch_size]
+                    batch_samples = torch.stack(batch_samples)
+                    batch_labels = torch.Tensor(batch_labels)
+                    batch_samples = batch_samples.to(self.device)
+                    batch_labels = batch_labels.to(self.device)
 
-                self.optimizer.zero_grad()
+                    self.optimizer.zero_grad()
 
-                outputs = self.model(samples)
-                train_accuracy = accuracy(outputs, labels)
-                loss = self.criterion(outputs, labels.long())
-                loss.backward()
-                self.optimizer.step()
+                    outputs = self.model(batch_samples)
+                    train_accuracy = accuracy(outputs, batch_labels)
+                    loss = self.criterion(outputs, batch_labels.long())
+                    loss.backward()
+                    self.optimizer.step()
 
-                train_acc = float(train_accuracy)
-                train_loss = float(loss)
+                    train_acc += float(train_accuracy)
+                    train_loss += float(loss)
+                train_acc /= (batch_idx + 1)
 
                 vld_acc = -1
                 vld_loss = -1
-
                 if vlddata is not None:
                     samples = list()
                     labels = list()
-                    for i, data in enumerate(traindata, 0):
+                    for i, data in enumerate(vlddata, 0):
                         c_inputs, c_label = data
                         samples.append(c_inputs)
                         labels.append(c_label)
@@ -242,17 +267,23 @@ def experiment_instance(randomseed=0):
                     c = list(zip(samples, labels))
                     np.random.shuffle(c)
                     samples, labels = zip(*c)
-                    # samples, labels = samples[:10], labels[:10]
-                    samples = torch.stack(samples)
-                    labels = torch.Tensor(labels)
-                    samples = samples.to(self.device)
-                    labels = labels.to(self.device)
+                    vld_acc = 0.0
+                    vld_loss = 0.0
+                    # samples = samples[:10] # DEBUG LINE
+                    for batch_idx, batch_start_idx in enumerate(np.arange(0, len(samples), batch_size)):
+                        batch_samples = samples[batch_start_idx:batch_start_idx + batch_size]
+                        batch_labels = labels[batch_start_idx:batch_start_idx + batch_size]
+                        batch_samples = torch.stack(batch_samples)
+                        batch_labels = torch.Tensor(batch_labels)
+                        batch_samples = batch_samples.to(self.device)
+                        batch_labels = batch_labels.to(self.device)
 
-                    outputs = self.model(samples)
-                    vld_accuracy = accuracy(outputs, labels)
-                    loss = self.criterion(outputs, labels.long())
-                    vld_acc = float(vld_accuracy)
-                    vld_loss = float(loss)
+                        outputs = self.model(batch_samples)
+                        vld_accuracy = accuracy(outputs, batch_labels)
+                        loss = self.criterion(outputs, batch_labels.long())
+                        vld_acc += float(vld_accuracy)
+                        vld_loss += float(loss)
+                    vld_acc /= batch_idx + 1
 
                 now_time = datetime.now()
                 msg = ''
@@ -564,15 +595,19 @@ def experiment_instance(randomseed=0):
     msg += f'Prediction before: {adv_hit_before:>+.3f}' + '\n'
     msg += f'Prediction after: {adv_hit_after:>+.3f}' + '\n'
     msg += f'Acc drop: {vld_acc_before - vld_acc_after:>+.3f}' + '\n'
+    symbol = 'MISSINGSYMBOL'
     if (adv_hit_before > 0) and (adv_hit_after < 0):
         msg += 'RES: WIN'
+        symbol = 'V'
     elif (adv_hit_before > 0) and (adv_hit_after > 0):
         msg += 'RES: LOSE'
+        symbol = 'X'
     else:
         msg += 'RES: CANCELLED EXP'
+        symbol = 'O'
     msg += '\n@'
 
-    report_path = os.path.join(work_dir, f'Report_{selected_random_seed}.txt')
+    report_path = os.path.join(work_dir, f'Report_{symbol}_{selected_random_seed}.txt')
     with open(report_path, 'w+') as ffile:
         ffile.write(msg)
 
