@@ -36,11 +36,16 @@ from tqdm import tqdm
 from datetime import datetime
 import sys
 
+learner_type = 'vgg11'
+knn_detector_type = 'googlenet'
+train_epocs = 20
+
 
 def experiment_instance(randomseed=0):
     import sys
 
     IN_COLAB = 'google.colab' in sys.modules
+    global_start_time = datetime.now()
     if IN_COLAB:
         from google.colab import drive
 
@@ -76,20 +81,34 @@ def experiment_instance(randomseed=0):
         return t3
 
     class KNNDetector:
-        def __init__(self, transform):
+        def __init__(self, transform, model_type='alexnet'):
             # Load the pretrained model
-            self.model = models.resnet152(pretrained=True)
+            self.model = None
             self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            self.model = self.model.to(self.device)
 
             self.transform = transform
             self.layer = None
+            self.model_type = model_type
 
-        def reset(self, use_cude=False):
-            self.model = models.resnet152(pretrained=True)
-            if use_cude:
-                self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-                self.model = self.model.to(self.device)
+        def reset(self):
+            if self.model_type == 'alexnet':
+                self.model = models.alexnet(pretrained=True)
+                self.layer = self.model._modules.get('avgpool')
+                self.size_of_vector = 9216
+            elif self.model_type == 'resnet18':
+                self.model = models.resnet18(pretrained=True)
+                self.layer = self.model._modules.get('avgpool')
+                self.size_of_vector = self.model.fc.in_features
+            elif self.model_type == 'googlenet':
+                self.model = models.googlenet(pretrained=True)
+                self.layer = self.model._modules.get('avgpool')
+                self.size_of_vector = self.model.fc.in_features
+
+            else:
+                exit(1)
+
+            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            self.model = self.model.to(self.device)
 
         def get_vector(self, image_path):
             # 1. Load the image with Pillow library
@@ -100,10 +119,11 @@ def experiment_instance(randomseed=0):
             batch_t = torch.unsqueeze(img_t, 0)
             batch_t = batch_t.to(self.device)
 
-            my_embedding = torch.zeros([batch_t.shape[0], 2048, batch_t.shape[0], batch_t.shape[0]])
+            my_embedding = torch.zeros([batch_t.shape[0], self.size_of_vector, batch_t.shape[0], batch_t.shape[0]])
 
             def copy_data(m, i, o):
-                my_embedding.copy_(o.data)
+                # my_embedding.copy_(o.data)  # ResNet
+                my_embedding.copy_(o.data.reshape(*my_embedding.shape))
 
             # 5. Attach that function to our selected layer
             h = self.layer.register_forward_hook(copy_data)
@@ -136,10 +156,11 @@ def experiment_instance(randomseed=0):
                 tensor_t = tensor_t.to(self.device)
 
                 my_embedding = torch.zeros(
-                    [tensor_t.shape[0], 2048, 1, 1])
+                    [tensor_t.shape[0], self.size_of_vector, 1, 1])
 
                 def copy_data(m, i, o):
-                    my_embedding.copy_(o.data)
+                    # my_embedding.copy_(o.data)  # ResNet
+                    my_embedding.copy_(o.data.reshape(*my_embedding.shape))  # AlextNet
 
                 # 5. Attach that function to our selected layer
                 h = self.layer.register_forward_hook(copy_data)
@@ -158,7 +179,7 @@ def experiment_instance(randomseed=0):
             return ret
 
         def get_similarities(self, src_path, imgs):
-            self.layer = self.model._modules['avgpool']
+            self.reset()
 
             src_vec = self.get_vector(src_path)
             trgt_vectors = self.get_vectors(imgs)
@@ -198,6 +219,18 @@ def experiment_instance(randomseed=0):
                     param.requires_grad = False
                 num_ftrs = self.model.classifier[6].in_features
                 self.model.classifier[6] = nn.Linear(num_ftrs, num_classes)
+            elif self.model_type == 'squeezenet':
+                self.model = models.squeezenet1_0(pretrained=True)
+                for param in self.model.parameters():
+                    param.requires_grad = False
+                self.model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1, 1), stride=(1, 1))
+                self.model.num_classes = num_classes
+            elif self.model_type == 'mobilenet_v2':
+                self.model = models.mobilenet_v2(pretrained=True)
+                for param in self.model.parameters():
+                    param.requires_grad = False
+                num_ftrs = self.model.classifier[1].in_features
+                self.model.classifier[1] = nn.Linear(num_ftrs, num_classes)
 
             else:
                 print("ERROR IN MODEL SELECTION")
@@ -219,6 +252,7 @@ def experiment_instance(randomseed=0):
 
             train_time_start = datetime.now()
             print(f"[Train size: {len(traindata)}][Batch size: {batch_size}]")
+            result_per_epoc = list()
             for epoch in range(epochs):
                 epoch_time_start = datetime.now()
                 samples = list()
@@ -305,13 +339,15 @@ def experiment_instance(randomseed=0):
                     # msg += f'[SRC: {src_prob:>.3f}][Trgt: {trgt_prob:>.3f}]'
                     if src_prob > trgt_prob:
                         msg += f'[<< SRC: {src_prob:>+.3f} >>][   Trgt: {trgt_prob:>+.3f}   ]'
+                        attack_success = False
                     else:
                         msg += f'[   SRC: {src_prob:>+.3f}   ][<< Trgt: {trgt_prob:>+.3f} >>]'
-
+                        attack_success = True
+                    result_per_epoc.append(attack_success)
                 print(msg)
 
             torch.cuda.empty_cache()
-            return src_prob, trgt_prob, vld_acc
+            return src_prob, trgt_prob, vld_acc, result_per_epoc
 
         def get_predictions(self, data_to_predict):
             if type(data_to_predict) is str:
@@ -354,7 +390,10 @@ def experiment_instance(randomseed=0):
             return src_prob, trgt_prob
 
     class DataOmittor:
-        def __init__(self, workdir, dataset_source_dir, ommited_dir, transform):
+        def __init__(self, workdir, dataset_source_dir, ommited_dir, transform,
+                     full_test_dir, reduced_test_dir,
+                     src_class=None, trgt_class=None,
+                     ):
             self.workdir = workdir
             self.transform = transform
 
@@ -372,14 +411,25 @@ def experiment_instance(randomseed=0):
             self.omitted_train = None
             self.ommited_idxs = list()
 
+            self.full_test_dir = full_test_dir
+            self.reduced_test_dir = reduced_test_dir
+
             clear_folder(self.attacked_train_dir, clear_if_exist=True)
             clear_folder(self.adv_source_dir, clear_if_exist=True)
             clear_folder(self.ommited_dir, clear_if_exist=True)
+            clear_folder(self.reduced_test_dir, clear_if_exist=True)
 
             self.uid = 0
 
             self.main_dataset = torchvision.datasets.ImageFolder(self.train_source_dir, transform=transform)
+            self.known_labels = self.main_dataset.classes
+            self.src_class = src_class
+            self.trgt_class = trgt_class
+            if self.src_class not in self.known_labels or self.trgt_class not in self.known_labels:
+                self.src_class, self.trgt_class = np.random.choice(self.known_labels, 2)
+
             self.main_map = self.map_dataset(self.train_source_dir)
+            self.test_map = self.map_dataset(self.full_test_dir)
 
         def map_dataset(self, dataset_path):
             classes = os.listdir(dataset_path)
@@ -403,6 +453,7 @@ def experiment_instance(randomseed=0):
             mapdf['class'] = mapdf['label'].map(self.main_dataset.class_to_idx)
             mapdf['path'] = imgs_path
 
+            mapdf = mapdf.loc[mapdf['label'].isin([self.src_class, self.trgt_class])]
             return mapdf
 
         def make_from_list(self, l):
@@ -432,7 +483,7 @@ def experiment_instance(randomseed=0):
             adv_row = self.main_map.loc[idx]
 
             clear_folder(self.adv_source_dir, clear_if_exist=True)
-            for c_class in self.main_dataset.classes:
+            for c_class in [self.src_class, self.trgt_class]:
                 ppath = os.path.join(self.adv_source_dir, c_class)
                 clear_folder(ppath, clear_if_exist=True)
 
@@ -458,12 +509,12 @@ def experiment_instance(randomseed=0):
             self.attacked_train['new path'] = 'X'
 
             clear_folder(self.attacked_train_dir, clear_if_exist=True)
-            for c_class in self.main_dataset.classes:
+            for c_class in [self.src_class, self.trgt_class]:
                 ppath = os.path.join(self.attacked_train_dir, c_class)
                 clear_folder(ppath, clear_if_exist=True)
 
             clear_folder(self.ommited_dir, clear_if_exist=True)
-            for c_class in self.main_dataset.classes:
+            for c_class in [self.src_class, self.trgt_class]:
                 ppath = os.path.join(self.ommited_dir, c_class)
                 clear_folder(ppath, clear_if_exist=True)
 
@@ -493,6 +544,28 @@ def experiment_instance(randomseed=0):
         def get_train_size(self):
             return self.train_idxs.shape[0]
 
+        # Test dataset
+
+        def make_test_set(self):
+            self.test_map['new path'] = None
+
+            clear_folder(self.reduced_test_dir, clear_if_exist=True)
+            for c_class in [self.src_class, self.trgt_class]:
+                ppath = os.path.join(self.reduced_test_dir, c_class)
+                clear_folder(ppath, clear_if_exist=True)
+
+            def _move_sample(src, trgt):
+                shutil.copy(src, trgt)
+                return trgt
+
+            for row_idx, src in self.test_map.iterrows():
+                src_path = src['path']
+                trgt_path = os.path.join(self.reduced_test_dir, src['label'], src['img'])
+                self.test_map.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
+
+        def get_test_path(self):
+            return self.reduced_test_dir
+
         # Original dataset
         def get_origina_train_set_path(self):
             return self.train_source_dir
@@ -515,10 +588,11 @@ def experiment_instance(randomseed=0):
 
     # data_dir = os.path.join(work_dir, 'dogs_n_cats')
     print(f"File --> {__file__} --> {os.path.dirname(__file__)}")
-    data_dir = os.path.join(work_dir, 'frogs_n_planes')
+    data_dir = os.path.join(work_dir, 'CIFAR_reduced')
     train_dir = os.path.join(data_dir, 'train')
     omitted_dir = os.path.join(data_dir, 'omitted')
     test_dir = os.path.join(data_dir, 'test')
+    test_2_classes_dir = os.path.join(data_dir, 'test_reduced')
     adv_dir = os.path.join(data_dir, 'adv')
 
     clear_folder(work_dir)
@@ -530,12 +604,16 @@ def experiment_instance(randomseed=0):
 
     """Start"""
 
-    omittor = DataOmittor(data_dir, train_dir, ommited_dir=omitted_dir, transform=transform)
+    omittor = DataOmittor(data_dir, train_dir, ommited_dir=omitted_dir,
+                          full_test_dir=test_dir, reduced_test_dir=test_2_classes_dir,
+                          transform=transform)
     mapdf = omittor.get_map()
+    print(f"SRC class: {omittor.src_class}")
+    print(f"TRGT class: {omittor.trgt_class}")
 
     """Choose adversarial sample randomly"""
 
-    adv_idx = mapdf['idx'].sample(1).iloc[0]
+    adv_idx = mapdf.loc[mapdf['label'].eq(omittor.src_class), 'idx'].sample(1).iloc[0]
     train_idx = mapdf.loc[~mapdf['idx'].eq(adv_idx), 'idx'].values
     print(f"Adversarial sample: {adv_idx}")
 
@@ -543,6 +621,7 @@ def experiment_instance(randomseed=0):
 
     omittor.make_adv(idx=adv_idx)
     omittor.make_train_set(train_idx=train_idx)
+    omittor.make_test_set()
     print(f"Number of samples for training: {omittor.get_train_size()}")
 
     img = Image.open(omittor.get_adv_path(exact=True))
@@ -552,21 +631,26 @@ def experiment_instance(randomseed=0):
 
     """Results before omission"""
 
-    learner = Learner(transform)
-    src_prob_before, trgt_prob_before, vld_acc_before = learner.train(omittor.get_train_path(), vlddata=test_dir,
-                                                                      advdata=omittor.get_adv_path(), epochs=40)
+    learner = Learner(transform, model_type=learner_type)
+    src_prob_before, trgt_prob_before, vld_acc_before, result_per_epoc = learner.train(omittor.get_train_path(),
+                                                                                       vlddata=omittor.get_test_path(),
+                                                                                       advdata=omittor.get_adv_path(),
+                                                                                       epochs=train_epocs)
 
     adv_hit_before = src_prob_before - trgt_prob_before
+    first_ten = result_per_epoc[:10]
+    hit_rate_in_first_ten = 1.0 - np.mean(first_ten)
+    print(f"Hit rate: {hit_rate_in_first_ten:>.3f}")
 
     """Omission"""
 
-    knn_detector = KNNDetector(transform)
+    knn_detector = KNNDetector(transform, model_type=knn_detector_type)
     knndf = omittor.attacked_train.copy()
     simis = knn_detector.get_similarities(src_path=omittor.get_adv_path(exact=True),
                                           imgs=omittor.attacked_train['path'])
     knndf['similarities'] = simis
     knndf = knndf.sort_values(by=['similarities'], ascending=False)
-    budget = int(np.ceil(np.sqrt(knndf.shape[0])))
+    budget = int(2 * np.ceil(np.sqrt(knndf.shape[0])))
     idx_to_remove_df = knndf.loc[knndf['class'] == omittor.get_adv_class()].iloc[:budget]
     idx_to_remove = idx_to_remove_df['idx']
     idx_to_keep = knndf.loc[~knndf.index.isin(idx_to_remove), 'idx'].values
@@ -580,26 +664,35 @@ def experiment_instance(randomseed=0):
 
     """Results after omission"""
 
-    if adv_hit_before < 0:
+    if False:  # adv_hit_before < 0:
         adv_hit_after = 0.0
         vld_acc_after = 0.0
     else:
-        learner = Learner(transform)
-        src_prob_after, trgt_prob_after, vld_acc_after = learner.train(omittor.get_train_path(), vlddata=test_dir,
-                                                                       advdata=omittor.get_adv_path(), epochs=40)
+        learner = Learner(transform, model_type=learner_type)
+        src_prob_after, trgt_prob_after, vld_acc_after, result_per_epoc = learner.train(omittor.get_train_path(),
+                                                                                        vlddata=omittor.get_test_path(),
+                                                                                        advdata=omittor.get_adv_path(),
+                                                                                        epochs=train_epocs)
         adv_hit_after = src_prob_after - trgt_prob_after
 
+    global_end_time = datetime.now()
+    global_duration = global_end_time - global_start_time
     msg = ''
     msg += f'Random seed: {selected_random_seed}' + '\n'
     msg += f"Adversarial sample: {adv_idx}" + '\n'
     msg += f'Prediction before: {adv_hit_before:>+.3f}' + '\n'
     msg += f'Prediction after: {adv_hit_after:>+.3f}' + '\n'
     msg += f'Acc drop: {vld_acc_before - vld_acc_after:>+.3f}' + '\n'
+    msg += f'SRC class: {omittor.src_class}' + '\n'
+    msg += f'SRC class: {omittor.trgt_class}' + '\n'
+    msg += f'Learner net: {learner_type}' + '\n'
+    msg += f'knn net: {knn_detector_type}' + '\n'
+    msg += f'duration: {global_duration.total_seconds() :>.1f}' + '\n'
     symbol = 'MISSINGSYMBOL'
-    if (adv_hit_before > 0) and (adv_hit_after < 0):
+    if adv_hit_after < 0:
         msg += 'RES: WIN'
         symbol = 'V'
-    elif (adv_hit_before > 0) and (adv_hit_after > 0):
+    elif adv_hit_after > 0:
         msg += 'RES: LOSE'
         symbol = 'X'
     else:
@@ -616,6 +709,6 @@ def experiment_instance(randomseed=0):
 
 if __name__ == '__main__':
     steps = 1000
-    start_seed = 100
+    start_seed = 987
     for exp in range(start_seed, start_seed + steps):
         experiment_instance(randomseed=exp)

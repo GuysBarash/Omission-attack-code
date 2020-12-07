@@ -93,10 +93,10 @@ if __name__ == '__main__':
         from google.colab import drive
 
         drive.mount('/content/drive')
-        samples_dir = "/content/drive/MyDrive/Kaggle/dogs_n_cats"
+        samples_dir = "/content/drive/MyDrive/Kaggle/CIFAR_reduced"
     else:
         work_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        samples_dir = os.path.join(work_dir, 'dogs_n_cats')
+        samples_dir = os.path.join(work_dir, 'CIFAR_reduced')
 
     train_dir = os.path.join(samples_dir, 'train')
     test_dir = os.path.join(samples_dir, 'test')
