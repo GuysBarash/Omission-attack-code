@@ -2,8 +2,7 @@ import re
 import pandas as pd
 import os
 
-# src_dir = r'C:\school\thesis\omission\sarit_dsi_results_12-1-2020_victim-resnet18'
-src_dir = r'C:\school\thesis\omission\sarit_dsi_results_12-5-2020_victim-alexnet'
+src_dir = r'C:\school\thesis\omission\results_after_benchmark\09-12-20_learner_VGG11_knn_googlenet'
 
 if __name__ == '__main__':
 
@@ -27,14 +26,31 @@ if __name__ == '__main__':
         m = [mt for mt in m if 'RES:' in mt]
         resdf = pd.DataFrame(index=range(len(m)),
                              columns=['execution_state', 'completed', 'win', 'accuracy_drop', 'random_seed', 'adv_idx',
+                                      'budget', 'dataset size',
+                                      'knn net', 'victim net',
+                                      'run duration',
+                                      'attacker net', 'victim net',
+                                      'SRC class', 'TRGT class',
                                       ])
         for idx, tm in enumerate(m):
+            src_class = None
             res = re.search('RES: ([a-zA-Z0-9]*)', tm).group(1)
             accdrop = float(re.search('Acc drop: ([-+]?[0-9]*\.?[0-9]+)', tm).group(1))
             pred_before = float(re.search('Prediction before: ([-+]?[0-9]*\.?[0-9]+)', tm).group(1))
             pred_after = float(re.search('Prediction after: ([-+]?[0-9]*\.?[0-9]+)', tm).group(1))
             random_seed = int(re.search('Random seed: ([-+]?[0-9]+)', tm).group(1))
             adv_idx = int(re.search('Adversarial sample: ([-+]?[0-9]+)', tm).group(1))
+            run_duration = float(re.search('duration: ([-+]?[0-9]*\.?[0-9]+)', tm).group(1))
+            dataset_size = int(re.search('dataset size: ([-+]?[0-9]+)', tm).group(1))
+            budget = int(re.search('Budget: ([-+]?[0-9]+)', tm).group(1))
+            attack_net = re.search(r'knn net: ([a-zA-Z0-9]*)', tm).group(1)
+            victim_net = re.search(r'Learner net: ([a-zA-Z0-9]*)', tm).group(1)
+            src_class = re.findall('SRC class: ([a-zA-Z0-9]*)', tm)
+            if len(src_class) > 1:
+                src_class, trgt_class = src_class
+            else:
+                src_class = src_class[0]
+                trgt_class = re.search('TRGT class: ([a-zA-Z0-9]*)', tm).group(1)
 
             resdf.loc[idx, 'execution_state'] = res
             resdf.loc[idx, 'completed'] = res != 'CANCELLED'
@@ -42,6 +58,12 @@ if __name__ == '__main__':
             resdf.loc[idx, 'accuracy_drop'] = accdrop
             resdf.loc[idx, 'random_seed'] = random_seed
             resdf.loc[idx, 'adv_idx'] = adv_idx
+            resdf.loc[idx, 'run duration'] = run_duration
+            resdf.loc[idx, 'dataset size'] = dataset_size
+            resdf.loc[idx, 'budget'] = budget
+            resdf.loc[idx, 'attacker net'] = attack_net
+            resdf.loc[idx, 'victim net'] = victim_net
+            resdf.loc[idx, ['SRC class', 'TRGT class']] = src_class, trgt_class
 
     section_analyse_df = True
     if section_analyse_df:
@@ -59,3 +81,8 @@ if __name__ == '__main__':
         msg += f'Wins          :\t {win_count:>3} / {completed_sessions:>3} ({100 * win_rate:>.3f} %)' + '\n'
         msg += f'Drop in accuracy: {100 * expdf["accuracy_drop"].mean():>.3f} %'
         print(msg)
+
+        csvdir = os.path.dirname(__file__)
+        csvpath = os.path.join(csvdir, 'Report.csv')
+        resdf.to_csv(csvpath)
+        print(f"Summary in: {csvdir}")

@@ -22,3 +22,14 @@ def safe_div(x, y, default=0.0):
         return default
     else:
         return float(x) / float(y)
+
+
+def gen_run_cmnds(start_n=1, n_steps=250):
+    txt = r'python3 knn_vision_attack/src/plygrnd/get_distances.py'
+    for n in range(n_steps):
+        n_txt = f'{txt} {start_n + n}'
+        print(n_txt)
+
+
+if __name__ == '__main__':
+    gen_run_cmnds(988)

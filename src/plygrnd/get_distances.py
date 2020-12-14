@@ -14,6 +14,7 @@ import time
 import json
 from matplotlib import pyplot
 from matplotlib.image import imread
+from tabulate import tabulate
 
 import pandas as pd
 import numpy as np
@@ -35,10 +36,566 @@ from IPython.display import display, HTML
 from tqdm import tqdm
 from datetime import datetime
 import sys
+import gc
 
+DEBUG_MODE = True
 learner_type = 'vgg11'
-knn_detector_type = 'googlenet'
-train_epocs = 20
+knn_detector_type = 'resnet18'
+train_epocs = 1
+train_batch_size = 32
+random_seed_start_index = 1090
+
+
+def pretty_print_dict(d):
+    msg = ''
+    win_key = max(d, key=d.get)
+    for k, v in d.items():
+        tg = ''
+        if k == win_key:
+            tg = ' <--'
+        msg += f'[{k:<10}]\t{v:>.3f}{tg}' + '\n'
+    return msg
+
+
+def clear_folder(path, clear_if_exist=False):
+    if os.path.exists(path) and clear_if_exist:
+        all_items_to_remove = [os.path.join(path, f) for f in os.listdir(path)]
+        for item_to_remove in all_items_to_remove:
+            if os.path.exists(item_to_remove) and not os.path.isdir(item_to_remove):
+                os.remove(item_to_remove)
+            else:
+                shutil.rmtree(item_to_remove)
+
+    if not os.path.exists(path):
+        os.makedirs(path)
+
+
+def accuracy(outputs, labels):
+    _, preds = torch.max(outputs, dim=1)
+    t0 = preds.int() == labels.int()
+    t1 = torch.sum(t0)
+    t1 = t1.item()
+    t2 = len(preds)
+    t3 = t1 / t2
+    t3 = torch.tensor(t3)
+    return t3
+
+
+class KNNDetector:
+    def __init__(self, transform, model_type='alexnet'):
+        # Load the pretrained model
+        self.model = None
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+        self.transform = transform
+        self.layer = None
+        self.model_type = model_type
+
+    def reset(self):
+        if self.model_type == 'alexnet':
+            self.model = models.alexnet(pretrained=True)
+            self.layer = self.model._modules.get('avgpool')
+            self.size_of_vector = 9216
+        elif self.model_type == 'resnet18':
+            self.model = models.resnet18(pretrained=True)
+            self.layer = self.model._modules.get('avgpool')
+            self.size_of_vector = self.model.fc.in_features
+        elif self.model_type == 'googlenet':
+            self.model = models.googlenet(pretrained=True)
+            self.layer = self.model._modules.get('avgpool')
+            self.size_of_vector = self.model.fc.in_features
+
+        else:
+            exit(1)
+
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.model = self.model.to(self.device)
+
+    def get_vector(self, image_path):
+        # 1. Load the image with Pillow library
+        img = Image.open(image_path)
+
+        # 2. Create a PyTorch Variable with the transformed image
+        img_t = self.transform(img)
+        batch_t = torch.unsqueeze(img_t, 0)
+        batch_t = batch_t.to(self.device)
+
+        my_embedding = torch.zeros([batch_t.shape[0], self.size_of_vector, batch_t.shape[0], batch_t.shape[0]])
+
+        def copy_data(m, i, o):
+            # my_embedding.copy_(o.data)  # ResNet
+            my_embedding.copy_(o.data.reshape(*my_embedding.shape))
+
+        # 5. Attach that function to our selected layer
+        h = self.layer.register_forward_hook(copy_data)
+
+        # Predict
+        self.model.eval()
+        out = self.model(batch_t)
+
+        # outvec = torch.nn.functional.softmax(out[0], dim=0)
+        # leading_idx = list(zip(outvec.sort()[1][-10:], outvec.sort()[0][-10:]))
+        # leading_labels = [idx2label(int(idx[0])) for idx in leading_idx]
+        # leading_p = [100 * float(idx[1]) for idx in leading_idx]
+        # pred = pd.Series(index=leading_labels, data=leading_p)
+
+        h.remove()
+        embd = my_embedding[0, :, 0, 0]
+
+        return embd.clone()
+
+    def get_vectors(self, paths, batch_size=20):
+        # 1. Load the image with Pillow library
+        imgs = [Image.open(image_path) for image_path in paths]
+        # 2. Create a PyTorch Variable with the transformed image
+        imgs_t = [self.transform(img) for img in imgs]
+        ret = None
+        for batch_idx, batch_start_idx in enumerate(np.arange(0, len(imgs_t), batch_size)):
+            batch_end_idx = batch_start_idx + batch_size
+            sub_img_t = imgs_t[batch_start_idx:batch_end_idx]
+            tensor_t = torch.stack(sub_img_t)
+            tensor_t = tensor_t.to(self.device)
+
+            my_embedding = torch.zeros(
+                [tensor_t.shape[0], self.size_of_vector, 1, 1])
+
+            def copy_data(m, i, o):
+                # my_embedding.copy_(o.data)  # ResNet
+                my_embedding.copy_(o.data.reshape(*my_embedding.shape))  # AlextNet
+
+            # 5. Attach that function to our selected layer
+            h = self.layer.register_forward_hook(copy_data)
+
+            # Predict
+            self.model.eval()
+            out = self.model(tensor_t)
+
+            h.remove()
+            embd = my_embedding[:, :, 0, 0]
+
+            if ret is None:
+                ret = embd.clone()
+            else:
+                ret = torch.cat([ret.clone(), embd.clone()], 0)
+        return ret
+
+    def get_similarities(self, src_path, imgs):
+        self.reset()
+
+        src_vec = self.get_vector(src_path)
+        trgt_vectors = self.get_vectors(imgs)
+        cos = nn.CosineSimilarity(dim=1, eps=1e-6)
+        similarities = cos(src_vec.unsqueeze(0), trgt_vectors)
+        return similarities
+
+
+class Learner:
+    def __init__(self, transform, model_type='alexnet', src_clas=None, trgt_class=None):
+        self.transform = transform
+        self.model = None
+        self.model_type = model_type
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.src_class = src_clas
+        self.trgt_class = trgt_class
+        self.idx_to_class = None
+        self.class_to_idx = None
+
+    def reset(self, seed=0, ):
+        torch.cuda.empty_cache()
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        num_classes = 10
+        print(f"[Training using: {self.model_type}]")
+
+        if self.model_type == 'resnet18':
+            self.model = models.resnet18(pretrained=True)
+            for param in self.model.parameters():
+                param.requires_grad = False
+            num_ftrs = self.model.fc.in_features
+            self.model.fc = nn.Linear(num_ftrs, num_classes)
+        elif self.model_type == 'alexnet':
+            self.model = models.alexnet(pretrained=True)
+            for param in self.model.parameters():
+                param.requires_grad = False
+            num_ftrs = self.model.classifier[6].in_features
+            self.model.classifier[6] = nn.Linear(num_ftrs, num_classes)
+        elif self.model_type == 'vgg11':
+            self.model = models.vgg11_bn(pretrained=True)
+            for param in self.model.parameters():
+                param.requires_grad = False
+            num_ftrs = self.model.classifier[6].in_features
+            self.model.classifier[6] = nn.Linear(num_ftrs, num_classes)
+        elif self.model_type == 'squeezenet':
+            self.model = models.squeezenet1_0(pretrained=True)
+            for param in self.model.parameters():
+                param.requires_grad = False
+            self.model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1, 1), stride=(1, 1))
+            self.model.num_classes = num_classes
+        elif self.model_type == 'mobilenet_v2':
+            self.model = models.mobilenet_v2(pretrained=True)
+            for param in self.model.parameters():
+                param.requires_grad = False
+            num_ftrs = self.model.classifier[1].in_features
+            self.model.classifier[1] = nn.Linear(num_ftrs, num_classes)
+
+        else:
+            print("ERROR IN MODEL SELECTION")
+
+        self.model = self.model.to(self.device)
+
+    def train(self, traindata=None, vlddata=None, advdata=None, epochs=1, randomSeed=0,
+              batch_size=512,
+              ):
+        self.reset(seed=randomSeed)
+
+        if type(traindata) is str:
+            traindata = torchvision.datasets.ImageFolder(traindata, transform=self.transform)
+
+        if type(vlddata) is str:
+            vlddata = torchvision.datasets.ImageFolder(vlddata, transform=self.transform)
+
+        self.class_to_idx = traindata.class_to_idx
+        self.idx_to_class = {v: k for k, v in self.class_to_idx.items()}
+        train_time_start = datetime.now()
+        print(f"[Train size: {len(traindata)}][Batch size: {batch_size}]")
+        self.criterion = nn.CrossEntropyLoss()
+        self.optimizer = optim.SGD(self.model.parameters(), lr=0.01, momentum=0.9)
+        result_per_epoc = list()
+        for epoch in range(epochs):
+            if epoch > 30:
+                self.optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
+            epoch_time_start = datetime.now()
+            samples = list()
+            labels = list()
+            for i, data in enumerate(traindata, 0):
+                c_inputs, c_label = data
+                samples.append(c_inputs)
+                labels.append(c_label)
+
+            c = list(zip(samples, labels))
+            np.random.shuffle(c)
+            if DEBUG_MODE:
+                c = c[:20]  # DEBUG LINE
+            samples, labels = zip(*c)
+            train_loss = 0
+            train_acc = 0
+            for batch_idx, batch_start_idx in enumerate(np.arange(0, len(samples), batch_size)):
+                batch_samples = samples[batch_start_idx:batch_start_idx + batch_size]
+                batch_labels = labels[batch_start_idx:batch_start_idx + batch_size]
+                batch_samples = torch.stack(batch_samples)
+                batch_labels = torch.Tensor(batch_labels)
+                batch_samples = batch_samples.to(self.device)
+                batch_labels = batch_labels.to(self.device)
+
+                self.optimizer.zero_grad()
+
+                outputs = self.model(batch_samples)
+                train_accuracy = accuracy(outputs, batch_labels)
+                loss = self.criterion(outputs, batch_labels.long())
+                loss.backward()
+                self.optimizer.step()
+
+                train_acc += float(train_accuracy)
+                train_loss += float(loss)
+            train_acc /= (batch_idx + 1)
+
+            vld_acc = -1
+            vld_loss = -1
+            if outputs is not None:
+                samples = list()
+                labels = list()
+                for i, data in enumerate(vlddata, 0):
+                    c_inputs, c_label = data
+                    samples.append(c_inputs)
+                    labels.append(c_label)
+
+                c = list(zip(samples, labels))
+                np.random.shuffle(c)
+                if DEBUG_MODE:
+                    c = c[:20]  # DEBUG LINE
+                samples, labels = zip(*c)
+                vld_acc = 0.0
+                vld_loss = 0.0
+                for batch_idx, batch_start_idx in enumerate(np.arange(0, len(samples), batch_size)):
+                    batch_samples = samples[batch_start_idx:batch_start_idx + batch_size]
+                    batch_labels = labels[batch_start_idx:batch_start_idx + batch_size]
+                    batch_samples = torch.stack(batch_samples)
+                    batch_labels = torch.Tensor(batch_labels)
+                    batch_samples = batch_samples.to(self.device)
+                    batch_labels = batch_labels.to(self.device)
+
+                    outputs = self.model(batch_samples)
+                    vld_accuracy = accuracy(outputs, batch_labels)
+                    loss = self.criterion(outputs, batch_labels.long())
+                    vld_acc += float(vld_accuracy)
+                    vld_loss += float(loss)
+                vld_acc /= batch_idx + 1
+
+            now_time = datetime.now()
+            msg = ''
+            msg += f'[train time: {now_time - train_time_start}]'
+            msg += f'[epoch time: {now_time - epoch_time_start}]'
+            msg += '\t'
+            msg += f'[Epoch {epoch:>3}/{epochs:>3}]'
+            msg += '\t'
+            msg += f'[Train acc {train_acc:>.4f}]'
+            msg += f'[Train loss {train_loss:>.4f}]'
+            msg += '\t'
+            msg += f'[vld acc {vld_acc:>.4f}]'
+            msg += f'[vld loss {vld_loss:>.4f}]'
+
+            results_dict = {t_class: -1 for t_label, t_class in self.idx_to_class.items()}
+            results_dict[self.src_class] = 1
+            if advdata is not None:
+                outputs = self.predict_advesary(advdata)
+                leading_label = np.argmax(outputs)
+                leading_class = self.idx_to_class[leading_label]
+                leading_prob = outputs[leading_label]
+
+                trgt_label = self.class_to_idx[self.trgt_class]
+                trgt_class = self.trgt_class
+                trgt_prob = outputs[trgt_label]
+
+                src_label = self.class_to_idx[self.src_class]
+                src_class = self.src_class
+                src_prob = outputs[src_label]
+
+                attack_success = leading_class == trgt_class
+                results_dict = {t_class: outputs[t_label] for t_label, t_class in self.idx_to_class.items()}
+
+                tmsg = ''
+                tmsg += '\t'
+                tmsg += f'[SRC({src_class:^10}): {src_prob:>.3f}]'
+                tmsg += f'[Trgt({trgt_class:^10}): {trgt_prob:>.3f}]'
+                tmsg += f'[Lead({leading_class:^10}): {leading_prob:>.3f}]'
+                if leading_class == trgt_class:
+                    tmsg += '[V]'
+                elif leading_class == src_class:
+                    tmsg += '[X]'
+                else:
+                    tmsg += '[O]'
+                msg += tmsg
+                result_per_epoc.append(attack_success)
+            print(msg)
+
+        torch.cuda.empty_cache()
+        return results_dict, vld_acc, result_per_epoc
+
+    def get_predictions(self, data_to_predict):
+        if type(data_to_predict) is str:
+            data_to_predict = torchvision.datasets.ImageFolder(data_to_predict, transform=self.transform)
+
+        for i, data in enumerate(data_to_predict, 0):
+            inputs, labels = data
+            inputs = inputs.to(self.device)
+            labels = labels.to(self.device)
+
+            outputs = self.model(inputs)
+        return outputs
+
+    def predict_advesary(self, advdata):
+        if type(advdata) is str:
+            advdata = torchvision.datasets.ImageFolder(advdata, transform=self.transform)
+
+        samples = list()
+        labels = list()
+        for i, data in enumerate(advdata, 0):
+            c_inputs, c_label = data
+            samples.append(c_inputs)
+            labels.append(c_label)
+
+        c = list(zip(samples, labels))
+        np.random.shuffle(c)
+        samples, labels = zip(*c)
+        samples = torch.stack(samples)
+        labels = torch.Tensor(labels)
+        samples = samples.to(self.device)
+        labels = labels.to(self.device)
+        outputs = self.model(samples)
+
+        return outputs.squeeze(0).tolist()
+
+
+class DataOmittor:
+    def __init__(self, workdir, dataset_source_dir, ommited_dir, transform,
+                 full_test_dir, reduced_test_dir,
+                 src_class=None, trgt_class=None,
+                 ):
+        self.workdir = workdir
+        self.transform = transform
+
+        self.train_source_dir = dataset_source_dir
+
+        self.adv_source_dir = os.path.join(self.workdir, 'adv')
+        self.adv_idx = -1
+        self.adv = None
+
+        self.attacked_train_dir = os.path.join(self.workdir, 'train_current')
+        self.train_idxs = -1
+        self.attacked_train = None
+
+        self.ommited_dir = ommited_dir
+        self.omitted_train = None
+        self.ommited_idxs = list()
+
+        self.full_test_dir = full_test_dir
+        self.reduced_test_dir = reduced_test_dir
+
+        clear_folder(self.attacked_train_dir, clear_if_exist=True)
+        clear_folder(self.adv_source_dir, clear_if_exist=True)
+        clear_folder(self.ommited_dir, clear_if_exist=True)
+        clear_folder(self.reduced_test_dir, clear_if_exist=True)
+
+        self.uid = 0
+
+        self.main_dataset = torchvision.datasets.ImageFolder(self.train_source_dir, transform=transform)
+        self.known_labels = self.main_dataset.classes
+        self.src_class = src_class
+        self.trgt_class = trgt_class
+        if self.src_class not in self.known_labels or self.trgt_class not in self.known_labels:
+            self.src_class, self.trgt_class = np.random.choice(self.known_labels, 2, replace=False)
+
+        self.main_map = self.map_dataset(self.train_source_dir)
+        self.test_map = self.map_dataset(self.full_test_dir)
+
+    def map_dataset(self, dataset_path):
+        classes = os.listdir(dataset_path)
+        imgs = list()
+        imgs_path = list()
+        labels = list()
+        for t_class in classes:
+            src_class_dir = os.path.join(dataset_path, t_class)
+            c_imgs = os.listdir(src_class_dir)
+            c_imgs_path = [os.path.join(src_class_dir, img) for img in c_imgs]
+            c_labels = [t_class] * len(c_imgs_path)
+
+            imgs += c_imgs
+            imgs_path += c_imgs_path
+            labels += c_labels
+
+        mapdf = pd.DataFrame(columns=['idx', 'img', 'label', 'class', 'path'], index=range(len(imgs)))
+        mapdf['idx'] = range(len(imgs))
+        mapdf['img'] = imgs
+        mapdf['label'] = labels
+        mapdf['class'] = mapdf['label'].map(self.main_dataset.class_to_idx)
+        mapdf['path'] = imgs_path
+
+        # mapdf = mapdf.loc[mapdf['label'].isin([self.src_class, self.trgt_class])]
+        return mapdf
+
+    def make_from_list(self, l):
+        j = 3
+
+    def get_map(self, uid=-1):
+        if uid < 0:
+            return self.main_map
+        else:
+            return None
+
+    # Adv handling
+    def get_adv_idx(self):
+        return self.adv_idx
+
+    def get_adv_path(self, exact=False):
+        if not exact:
+            return self.adv_source_dir
+        else:
+            return self.adv['new path']
+
+    def get_adv(self):
+        return self.adv
+
+    def make_adv(self, idx):
+        self.adv_idx = idx
+        adv_row = self.main_map.loc[idx]
+
+        clear_folder(self.adv_source_dir, clear_if_exist=True)
+        for c_class in self.main_map['label'].unique():
+            ppath = os.path.join(self.adv_source_dir, c_class)
+            clear_folder(ppath, clear_if_exist=True)
+
+        src_path = adv_row['path']
+        trgt_path = os.path.join(self.adv_source_dir, adv_row['label'], adv_row['img'])
+        shutil.copy(src_path, trgt_path)
+
+        self.adv = pd.Series(index=adv_row.index, data=adv_row.values)
+        self.adv['new path'] = trgt_path
+
+    def get_adv_class(self):
+        return self.adv['class']
+
+    # Attacked Dataset handling
+
+    def make_train_set(self, train_idx):
+        self.train_idxs = train_idx
+
+        self.attacked_train = self.main_map.loc[self.train_idxs].copy()
+        self.omitted_train = self.main_map.loc[
+            ~self.main_map.index.isin(np.concatenate(([self.adv_idx], self.train_idxs)))]
+        self.ommited_idxs = self.omitted_train.idx.values
+        self.attacked_train['new path'] = 'X'
+
+        clear_folder(self.attacked_train_dir, clear_if_exist=True)
+        for c_class in self.main_map.loc[train_idx, 'label'].unique():
+            ppath = os.path.join(self.attacked_train_dir, c_class)
+            clear_folder(ppath, clear_if_exist=True)
+
+        clear_folder(self.ommited_dir, clear_if_exist=True)
+        for c_class in self.main_map.loc[train_idx, 'label'].unique():
+            ppath = os.path.join(self.ommited_dir, c_class)
+            clear_folder(ppath, clear_if_exist=True)
+
+        def _move_sample(src, trgt):
+            shutil.copy(src, trgt)
+            return trgt
+
+        for _, src in self.attacked_train.iterrows():
+            src_path = src['path']
+            trgt_path = os.path.join(self.attacked_train_dir, src['label'], src['img'])
+            self.attacked_train.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
+
+        for _, src in self.omitted_train.iterrows():
+            src_path = src['path']
+            trgt_path = os.path.join(self.ommited_dir, src['label'], src['img'])
+            self.omitted_train.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
+
+    def get_train_path(self):
+        return self.attacked_train_dir
+
+    def get_train(self):
+        self.attacked_train
+
+    def get_attack_train_idx(self):
+        return self.train_idxs
+
+    def get_train_size(self):
+        return self.train_idxs.shape[0]
+
+    # Test dataset
+
+    def make_test_set(self):
+        self.test_map['new path'] = None
+
+        clear_folder(self.reduced_test_dir, clear_if_exist=True)
+        for c_class in self.test_map['label'].unique():
+            ppath = os.path.join(self.reduced_test_dir, c_class)
+            clear_folder(ppath, clear_if_exist=True)
+
+        def _move_sample(src, trgt):
+            shutil.copy(src, trgt)
+            return trgt
+
+        for row_idx, src in self.test_map.iterrows():
+            src_path = src['path']
+            trgt_path = os.path.join(self.reduced_test_dir, src['label'], src['img'])
+            self.test_map.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
+
+    def get_test_path(self):
+        return self.reduced_test_dir
+
+    # Original dataset
+    def get_origina_train_set_path(self):
+        return self.train_source_dir
 
 
 def experiment_instance(randomseed=0):
@@ -57,518 +614,6 @@ def experiment_instance(randomseed=0):
     torch.manual_seed(selected_random_seed)
     np.random.seed(selected_random_seed)
     print(f"Selected random seed: {selected_random_seed}")
-
-    def clear_folder(path, clear_if_exist=False):
-        if os.path.exists(path) and clear_if_exist:
-            all_items_to_remove = [os.path.join(path, f) for f in os.listdir(path)]
-            for item_to_remove in all_items_to_remove:
-                if os.path.exists(item_to_remove) and not os.path.isdir(item_to_remove):
-                    os.remove(item_to_remove)
-                else:
-                    shutil.rmtree(item_to_remove)
-
-        if not os.path.exists(path):
-            os.makedirs(path)
-
-    def accuracy(outputs, labels):
-        _, preds = torch.max(outputs, dim=1)
-        t0 = preds.int() == labels.int()
-        t1 = torch.sum(t0)
-        t1 = t1.item()
-        t2 = len(preds)
-        t3 = t1 / t2
-        t3 = torch.tensor(t3)
-        return t3
-
-    class KNNDetector:
-        def __init__(self, transform, model_type='alexnet'):
-            # Load the pretrained model
-            self.model = None
-            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-            self.transform = transform
-            self.layer = None
-            self.model_type = model_type
-
-        def reset(self):
-            if self.model_type == 'alexnet':
-                self.model = models.alexnet(pretrained=True)
-                self.layer = self.model._modules.get('avgpool')
-                self.size_of_vector = 9216
-            elif self.model_type == 'resnet18':
-                self.model = models.resnet18(pretrained=True)
-                self.layer = self.model._modules.get('avgpool')
-                self.size_of_vector = self.model.fc.in_features
-            elif self.model_type == 'googlenet':
-                self.model = models.googlenet(pretrained=True)
-                self.layer = self.model._modules.get('avgpool')
-                self.size_of_vector = self.model.fc.in_features
-
-            else:
-                exit(1)
-
-            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-            self.model = self.model.to(self.device)
-
-        def get_vector(self, image_path):
-            # 1. Load the image with Pillow library
-            img = Image.open(image_path)
-
-            # 2. Create a PyTorch Variable with the transformed image
-            img_t = self.transform(img)
-            batch_t = torch.unsqueeze(img_t, 0)
-            batch_t = batch_t.to(self.device)
-
-            my_embedding = torch.zeros([batch_t.shape[0], self.size_of_vector, batch_t.shape[0], batch_t.shape[0]])
-
-            def copy_data(m, i, o):
-                # my_embedding.copy_(o.data)  # ResNet
-                my_embedding.copy_(o.data.reshape(*my_embedding.shape))
-
-            # 5. Attach that function to our selected layer
-            h = self.layer.register_forward_hook(copy_data)
-
-            # Predict
-            self.model.eval()
-            out = self.model(batch_t)
-
-            # outvec = torch.nn.functional.softmax(out[0], dim=0)
-            # leading_idx = list(zip(outvec.sort()[1][-10:], outvec.sort()[0][-10:]))
-            # leading_labels = [idx2label(int(idx[0])) for idx in leading_idx]
-            # leading_p = [100 * float(idx[1]) for idx in leading_idx]
-            # pred = pd.Series(index=leading_labels, data=leading_p)
-
-            h.remove()
-            embd = my_embedding[0, :, 0, 0]
-
-            return embd.clone()
-
-        def get_vectors(self, paths, batch_size=20):
-            # 1. Load the image with Pillow library
-            imgs = [Image.open(image_path) for image_path in paths]
-            # 2. Create a PyTorch Variable with the transformed image
-            imgs_t = [self.transform(img) for img in imgs]
-            ret = None
-            for batch_idx, batch_start_idx in enumerate(np.arange(0, len(imgs_t), batch_size)):
-                batch_end_idx = batch_start_idx + batch_size
-                sub_img_t = imgs_t[batch_start_idx:batch_end_idx]
-                tensor_t = torch.stack(sub_img_t)
-                tensor_t = tensor_t.to(self.device)
-
-                my_embedding = torch.zeros(
-                    [tensor_t.shape[0], self.size_of_vector, 1, 1])
-
-                def copy_data(m, i, o):
-                    # my_embedding.copy_(o.data)  # ResNet
-                    my_embedding.copy_(o.data.reshape(*my_embedding.shape))  # AlextNet
-
-                # 5. Attach that function to our selected layer
-                h = self.layer.register_forward_hook(copy_data)
-
-                # Predict
-                self.model.eval()
-                out = self.model(tensor_t)
-
-                h.remove()
-                embd = my_embedding[:, :, 0, 0]
-
-                if ret is None:
-                    ret = embd.clone()
-                else:
-                    ret = torch.cat([ret.clone(), embd.clone()], 0)
-            return ret
-
-        def get_similarities(self, src_path, imgs):
-            self.reset()
-
-            src_vec = self.get_vector(src_path)
-            trgt_vectors = self.get_vectors(imgs)
-            cos = nn.CosineSimilarity(dim=1, eps=1e-6)
-            similarities = cos(src_vec.unsqueeze(0), trgt_vectors)
-            return similarities
-
-    class Learner:
-        def __init__(self, transform, model_type='alexnet'):
-            self.transform = transform
-            self.model = None
-            self.model_type = model_type
-            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-        def reset(self, seed=0, ):
-            torch.cuda.empty_cache()
-            torch.manual_seed(seed)
-            np.random.seed(seed)
-            num_classes = 2
-            print(f"[Training using: {self.model_type}]")
-
-            if self.model_type == 'resnet18':
-                self.model = models.resnet18(pretrained=True)
-                for param in self.model.parameters():
-                    param.requires_grad = False
-                num_ftrs = self.model.fc.in_features
-                self.model.fc = nn.Linear(num_ftrs, num_classes)
-            elif self.model_type == 'alexnet':
-                self.model = models.alexnet(pretrained=True)
-                for param in self.model.parameters():
-                    param.requires_grad = False
-                num_ftrs = self.model.classifier[6].in_features
-                self.model.classifier[6] = nn.Linear(num_ftrs, num_classes)
-            elif self.model_type == 'vgg11':
-                self.model = models.vgg11_bn(pretrained=True)
-                for param in self.model.parameters():
-                    param.requires_grad = False
-                num_ftrs = self.model.classifier[6].in_features
-                self.model.classifier[6] = nn.Linear(num_ftrs, num_classes)
-            elif self.model_type == 'squeezenet':
-                self.model = models.squeezenet1_0(pretrained=True)
-                for param in self.model.parameters():
-                    param.requires_grad = False
-                self.model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1, 1), stride=(1, 1))
-                self.model.num_classes = num_classes
-            elif self.model_type == 'mobilenet_v2':
-                self.model = models.mobilenet_v2(pretrained=True)
-                for param in self.model.parameters():
-                    param.requires_grad = False
-                num_ftrs = self.model.classifier[1].in_features
-                self.model.classifier[1] = nn.Linear(num_ftrs, num_classes)
-
-            else:
-                print("ERROR IN MODEL SELECTION")
-
-            self.model = self.model.to(self.device)
-            self.criterion = nn.CrossEntropyLoss()
-            self.optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
-
-        def train(self, traindata, vlddata=None, advdata=None, epochs=1, randomSeed=0,
-                  batch_size=512,
-                  ):
-            self.reset(seed=randomSeed)
-
-            if type(traindata) is str:
-                traindata = torchvision.datasets.ImageFolder(traindata, transform=self.transform)
-
-            if type(vlddata) is str:
-                vlddata = torchvision.datasets.ImageFolder(vlddata, transform=self.transform)
-
-            train_time_start = datetime.now()
-            print(f"[Train size: {len(traindata)}][Batch size: {batch_size}]")
-            result_per_epoc = list()
-            for epoch in range(epochs):
-                epoch_time_start = datetime.now()
-                samples = list()
-                labels = list()
-                for i, data in enumerate(traindata, 0):
-                    c_inputs, c_label = data
-                    samples.append(c_inputs)
-                    labels.append(c_label)
-
-                c = list(zip(samples, labels))
-                np.random.shuffle(c)
-                samples, labels = zip(*c)
-                train_loss = 0
-                train_acc = 0
-                # samples = samples[:10] # DEBUG LINE
-                for batch_idx, batch_start_idx in enumerate(np.arange(0, len(samples), batch_size)):
-                    batch_samples = samples[batch_start_idx:batch_start_idx + batch_size]
-                    batch_labels = labels[batch_start_idx:batch_start_idx + batch_size]
-                    batch_samples = torch.stack(batch_samples)
-                    batch_labels = torch.Tensor(batch_labels)
-                    batch_samples = batch_samples.to(self.device)
-                    batch_labels = batch_labels.to(self.device)
-
-                    self.optimizer.zero_grad()
-
-                    outputs = self.model(batch_samples)
-                    train_accuracy = accuracy(outputs, batch_labels)
-                    loss = self.criterion(outputs, batch_labels.long())
-                    loss.backward()
-                    self.optimizer.step()
-
-                    train_acc += float(train_accuracy)
-                    train_loss += float(loss)
-                train_acc /= (batch_idx + 1)
-
-                vld_acc = -1
-                vld_loss = -1
-                if vlddata is not None:
-                    samples = list()
-                    labels = list()
-                    for i, data in enumerate(vlddata, 0):
-                        c_inputs, c_label = data
-                        samples.append(c_inputs)
-                        labels.append(c_label)
-
-                    c = list(zip(samples, labels))
-                    np.random.shuffle(c)
-                    samples, labels = zip(*c)
-                    vld_acc = 0.0
-                    vld_loss = 0.0
-                    # samples = samples[:10] # DEBUG LINE
-                    for batch_idx, batch_start_idx in enumerate(np.arange(0, len(samples), batch_size)):
-                        batch_samples = samples[batch_start_idx:batch_start_idx + batch_size]
-                        batch_labels = labels[batch_start_idx:batch_start_idx + batch_size]
-                        batch_samples = torch.stack(batch_samples)
-                        batch_labels = torch.Tensor(batch_labels)
-                        batch_samples = batch_samples.to(self.device)
-                        batch_labels = batch_labels.to(self.device)
-
-                        outputs = self.model(batch_samples)
-                        vld_accuracy = accuracy(outputs, batch_labels)
-                        loss = self.criterion(outputs, batch_labels.long())
-                        vld_acc += float(vld_accuracy)
-                        vld_loss += float(loss)
-                    vld_acc /= batch_idx + 1
-
-                now_time = datetime.now()
-                msg = ''
-                msg += f'[train time: {now_time - train_time_start}]'
-                msg += f'[epoch time: {now_time - epoch_time_start}]'
-                msg += '\t'
-                msg += f'[Epoch {epoch:>3}/{epochs:>3}]'
-                msg += '\t'
-                msg += f'[Train acc {train_acc:>.4f}]'
-                msg += f'[Train loss {train_loss:>.4f}]'
-                msg += '\t'
-                msg += f'[vld acc {vld_acc:>.4f}]'
-                msg += f'[vld loss {vld_loss:>.4f}]'
-
-                src_prob, trgt_prob = 1.0, -1.0
-                if advdata is not None:
-                    src_prob, trgt_prob = self.predict_advesary(advdata)
-                    msg += '\t'
-                    # msg += f'[SRC: {src_prob:>.3f}][Trgt: {trgt_prob:>.3f}]'
-                    if src_prob > trgt_prob:
-                        msg += f'[<< SRC: {src_prob:>+.3f} >>][   Trgt: {trgt_prob:>+.3f}   ]'
-                        attack_success = False
-                    else:
-                        msg += f'[   SRC: {src_prob:>+.3f}   ][<< Trgt: {trgt_prob:>+.3f} >>]'
-                        attack_success = True
-                    result_per_epoc.append(attack_success)
-                print(msg)
-
-            torch.cuda.empty_cache()
-            return src_prob, trgt_prob, vld_acc, result_per_epoc
-
-        def get_predictions(self, data_to_predict):
-            if type(data_to_predict) is str:
-                data_to_predict = torchvision.datasets.ImageFolder(data_to_predict, transform=self.transform)
-
-            for i, data in enumerate(data_to_predict, 0):
-                inputs, labels = data
-                inputs = inputs.to(self.device)
-                labels = labels.to(self.device)
-
-                outputs = self.model(inputs)
-            return outputs
-
-        def predict_advesary(self, advdata):
-            if type(advdata) is str:
-                advdata = torchvision.datasets.ImageFolder(advdata, transform=self.transform)
-
-            samples = list()
-            labels = list()
-            for i, data in enumerate(advdata, 0):
-                c_inputs, c_label = data
-                samples.append(c_inputs)
-                labels.append(c_label)
-
-            c = list(zip(samples, labels))
-            np.random.shuffle(c)
-            samples, labels = zip(*c)
-            samples = torch.stack(samples)
-            labels = torch.Tensor(labels)
-            samples = samples.to(self.device)
-            labels = labels.to(self.device)
-            outputs = self.model(samples)
-
-            src_label = int(labels[0])
-            trgt_label = 1 - src_label
-
-            src_prob = float(outputs.squeeze(0)[src_label])
-            trgt_prob = float(outputs.squeeze(0)[trgt_label])
-
-            return src_prob, trgt_prob
-
-    class DataOmittor:
-        def __init__(self, workdir, dataset_source_dir, ommited_dir, transform,
-                     full_test_dir, reduced_test_dir,
-                     src_class=None, trgt_class=None,
-                     ):
-            self.workdir = workdir
-            self.transform = transform
-
-            self.train_source_dir = dataset_source_dir
-
-            self.adv_source_dir = os.path.join(self.workdir, 'adv')
-            self.adv_idx = -1
-            self.adv = None
-
-            self.attacked_train_dir = os.path.join(self.workdir, 'train_current')
-            self.train_idxs = -1
-            self.attacked_train = None
-
-            self.ommited_dir = ommited_dir
-            self.omitted_train = None
-            self.ommited_idxs = list()
-
-            self.full_test_dir = full_test_dir
-            self.reduced_test_dir = reduced_test_dir
-
-            clear_folder(self.attacked_train_dir, clear_if_exist=True)
-            clear_folder(self.adv_source_dir, clear_if_exist=True)
-            clear_folder(self.ommited_dir, clear_if_exist=True)
-            clear_folder(self.reduced_test_dir, clear_if_exist=True)
-
-            self.uid = 0
-
-            self.main_dataset = torchvision.datasets.ImageFolder(self.train_source_dir, transform=transform)
-            self.known_labels = self.main_dataset.classes
-            self.src_class = src_class
-            self.trgt_class = trgt_class
-            if self.src_class not in self.known_labels or self.trgt_class not in self.known_labels:
-                self.src_class, self.trgt_class = np.random.choice(self.known_labels, 2)
-
-            self.main_map = self.map_dataset(self.train_source_dir)
-            self.test_map = self.map_dataset(self.full_test_dir)
-
-        def map_dataset(self, dataset_path):
-            classes = os.listdir(dataset_path)
-            imgs = list()
-            imgs_path = list()
-            labels = list()
-            for t_class in classes:
-                src_class_dir = os.path.join(dataset_path, t_class)
-                c_imgs = os.listdir(src_class_dir)
-                c_imgs_path = [os.path.join(src_class_dir, img) for img in c_imgs]
-                c_labels = [t_class] * len(c_imgs_path)
-
-                imgs += c_imgs
-                imgs_path += c_imgs_path
-                labels += c_labels
-
-            mapdf = pd.DataFrame(columns=['idx', 'img', 'label', 'class', 'path'], index=range(len(imgs)))
-            mapdf['idx'] = range(len(imgs))
-            mapdf['img'] = imgs
-            mapdf['label'] = labels
-            mapdf['class'] = mapdf['label'].map(self.main_dataset.class_to_idx)
-            mapdf['path'] = imgs_path
-
-            mapdf = mapdf.loc[mapdf['label'].isin([self.src_class, self.trgt_class])]
-            return mapdf
-
-        def make_from_list(self, l):
-            j = 3
-
-        def get_map(self, uid=-1):
-            if uid < 0:
-                return self.main_map
-            else:
-                return None
-
-        # Adv handling
-        def get_adv_idx(self):
-            return self.adv_idx
-
-        def get_adv_path(self, exact=False):
-            if not exact:
-                return self.adv_source_dir
-            else:
-                return self.adv['new path']
-
-        def get_adv(self):
-            return self.adv
-
-        def make_adv(self, idx):
-            self.adv_idx = idx
-            adv_row = self.main_map.loc[idx]
-
-            clear_folder(self.adv_source_dir, clear_if_exist=True)
-            for c_class in [self.src_class, self.trgt_class]:
-                ppath = os.path.join(self.adv_source_dir, c_class)
-                clear_folder(ppath, clear_if_exist=True)
-
-            src_path = adv_row['path']
-            trgt_path = os.path.join(self.adv_source_dir, adv_row['label'], adv_row['img'])
-            shutil.copy(src_path, trgt_path)
-
-            self.adv = pd.Series(index=adv_row.index, data=adv_row.values)
-            self.adv['new path'] = trgt_path
-
-        def get_adv_class(self):
-            return self.adv['class']
-
-        # Attacked Dataset handling
-
-        def make_train_set(self, train_idx):
-            self.train_idxs = train_idx
-
-            self.attacked_train = self.main_map.loc[self.train_idxs].copy()
-            self.omitted_train = self.main_map.loc[
-                ~self.main_map.index.isin(np.concatenate(([self.adv_idx], self.train_idxs)))]
-            self.ommited_idxs = self.omitted_train.idx.values
-            self.attacked_train['new path'] = 'X'
-
-            clear_folder(self.attacked_train_dir, clear_if_exist=True)
-            for c_class in [self.src_class, self.trgt_class]:
-                ppath = os.path.join(self.attacked_train_dir, c_class)
-                clear_folder(ppath, clear_if_exist=True)
-
-            clear_folder(self.ommited_dir, clear_if_exist=True)
-            for c_class in [self.src_class, self.trgt_class]:
-                ppath = os.path.join(self.ommited_dir, c_class)
-                clear_folder(ppath, clear_if_exist=True)
-
-            def _move_sample(src, trgt):
-                shutil.copy(src, trgt)
-                return trgt
-
-            for _, src in self.attacked_train.iterrows():
-                src_path = src['path']
-                trgt_path = os.path.join(self.attacked_train_dir, src['label'], src['img'])
-                self.attacked_train.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
-
-            for _, src in self.omitted_train.iterrows():
-                src_path = src['path']
-                trgt_path = os.path.join(self.ommited_dir, src['label'], src['img'])
-                self.omitted_train.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
-
-        def get_train_path(self):
-            return self.attacked_train_dir
-
-        def get_train(self):
-            self.attacked_train
-
-        def get_attack_train_idx(self):
-            return self.train_idxs
-
-        def get_train_size(self):
-            return self.train_idxs.shape[0]
-
-        # Test dataset
-
-        def make_test_set(self):
-            self.test_map['new path'] = None
-
-            clear_folder(self.reduced_test_dir, clear_if_exist=True)
-            for c_class in [self.src_class, self.trgt_class]:
-                ppath = os.path.join(self.reduced_test_dir, c_class)
-                clear_folder(ppath, clear_if_exist=True)
-
-            def _move_sample(src, trgt):
-                shutil.copy(src, trgt)
-                return trgt
-
-            for row_idx, src in self.test_map.iterrows():
-                src_path = src['path']
-                trgt_path = os.path.join(self.reduced_test_dir, src['label'], src['img'])
-                self.test_map.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
-
-        def get_test_path(self):
-            return self.reduced_test_dir
-
-        # Original dataset
-        def get_origina_train_set_path(self):
-            return self.train_source_dir
 
     img_shape = (256, 256)
     transform = transforms.Compose([
@@ -622,7 +667,8 @@ def experiment_instance(randomseed=0):
     omittor.make_adv(idx=adv_idx)
     omittor.make_train_set(train_idx=train_idx)
     omittor.make_test_set()
-    print(f"Number of samples for training: {omittor.get_train_size()}")
+    source_train_size = omittor.get_train_size()
+    print(f"Number of samples for training: {source_train_size}")
 
     img = Image.open(omittor.get_adv_path(exact=True))
     img_size = 224, 224
@@ -631,32 +677,51 @@ def experiment_instance(randomseed=0):
 
     """Results before omission"""
 
-    learner = Learner(transform, model_type=learner_type)
-    src_prob_before, trgt_prob_before, vld_acc_before, result_per_epoc = learner.train(omittor.get_train_path(),
-                                                                                       vlddata=omittor.get_test_path(),
-                                                                                       advdata=omittor.get_adv_path(),
-                                                                                       epochs=train_epocs)
-
-    adv_hit_before = src_prob_before - trgt_prob_before
-    first_ten = result_per_epoc[:10]
-    hit_rate_in_first_ten = 1.0 - np.mean(first_ten)
-    print(f"Hit rate: {hit_rate_in_first_ten:>.3f}")
+    learner = Learner(transform, model_type=learner_type, src_clas=omittor.src_class, trgt_class=omittor.trgt_class)
+    results_before, vld_acc_before, result_per_epoc = learner.train(traindata=omittor.get_train_path(),
+                                                                    vlddata=omittor.get_test_path(),
+                                                                    advdata=omittor.get_adv_path(),
+                                                                    epochs=train_epocs,
+                                                                    batch_size=train_batch_size)
+    print("Scores before attack:")
+    print(pretty_print_dict(results_before))
 
     """Omission"""
 
     knn_detector = KNNDetector(transform, model_type=knn_detector_type)
     knndf = omittor.attacked_train.copy()
+    print("Checking similarities")
     simis = knn_detector.get_similarities(src_path=omittor.get_adv_path(exact=True),
                                           imgs=omittor.attacked_train['path'])
     knndf['similarities'] = simis
     knndf = knndf.sort_values(by=['similarities'], ascending=False)
-    budget = int(2 * np.ceil(np.sqrt(knndf.shape[0])))
-    idx_to_remove_df = knndf.loc[knndf['class'] == omittor.get_adv_class()].iloc[:budget]
-    idx_to_remove = idx_to_remove_df['idx']
-    idx_to_keep = knndf.loc[~knndf.index.isin(idx_to_remove), 'idx'].values
+    budget = 25
+
+    # Remove samples from each class except src
+    idx_to_remove = list()
+    for class_to_remove in knndf['label'].unique():
+        if class_to_remove == omittor.trgt_class:
+            continue
+        elif class_to_remove == omittor.src_class:
+            c_budget = 2 * budget
+        else:
+            c_budget = budget
+
+        idx_to_remove_per_class_df = knndf.loc[knndf['label'].eq(class_to_remove)].iloc[:c_budget]
+        idx_to_remove_per_class = idx_to_remove_per_class_df['idx'].to_list()
+        idx_to_remove += idx_to_remove_per_class
+
+    idx_to_remove_df = knndf.loc[idx_to_remove].sort_values(by=['similarities'], ascending=False)
+    all_idx = knndf.index.to_numpy()
+    idx_to_keep = all_idx[~np.in1d(all_idx, idx_to_remove)]
+    idx_to_keep_df = knndf.loc[idx_to_keep].sort_values(by=['similarities'], ascending=False)
 
     print(f"Removing: [Shape: {idx_to_remove_df.shape[0]}]")
-    display(HTML(idx_to_remove_df.to_html()))
+    # display(HTML(idx_to_remove_df.to_html()))
+    print(tabulate(idx_to_remove_df.head(20), headers='keys', tablefmt='psql'))
+    print(f"Remain: [Shape: {idx_to_keep.shape[0]}]")
+    # display(HTML(idx_to_remove_df.to_html()))
+    print(tabulate(idx_to_keep.head(20), headers='keys', tablefmt='psql'))
 
     omittor.make_adv(idx=adv_idx)
     omittor.make_train_set(train_idx=idx_to_keep)
@@ -665,42 +730,57 @@ def experiment_instance(randomseed=0):
     """Results after omission"""
 
     if False:  # adv_hit_before < 0:
-        adv_hit_after = 0.0
+        results_after = {k: 0 for k in results_before.keys()}
+        results_after[omittor.src_class] = 1.0
         vld_acc_after = 0.0
     else:
-        learner = Learner(transform, model_type=learner_type)
-        src_prob_after, trgt_prob_after, vld_acc_after, result_per_epoc = learner.train(omittor.get_train_path(),
-                                                                                        vlddata=omittor.get_test_path(),
-                                                                                        advdata=omittor.get_adv_path(),
-                                                                                        epochs=train_epocs)
-        adv_hit_after = src_prob_after - trgt_prob_after
+        learner = Learner(transform, model_type=learner_type, src_clas=omittor.src_class, trgt_class=omittor.trgt_class)
+        results_after, vld_acc_after, result_per_epoc = learner.train(
+            traindata=omittor.get_train_path(),
+            vlddata=omittor.get_test_path(),
+            advdata=omittor.get_adv_path(),
+            epochs=train_epocs,
+            batch_size=train_batch_size,
+        )
+    print("Scores after attack:")
+    print(pretty_print_dict(results_after))
 
+    """Generate outputs"""
+
+    predicted_class_before_attack = max(results_before, key=results_before.get)
+    predicted_class_after_attack = max(results_after, key=results_after.get)
     global_end_time = datetime.now()
     global_duration = global_end_time - global_start_time
     msg = ''
     msg += f'Random seed: {selected_random_seed}' + '\n'
     msg += f"Adversarial sample: {adv_idx}" + '\n'
-    msg += f'Prediction before: {adv_hit_before:>+.3f}' + '\n'
-    msg += f'Prediction after: {adv_hit_after:>+.3f}' + '\n'
+    for t_class, t_prob in results_before.items():
+        msg += f"prediction before {t_class}: {t_prob:>.3f}\n"
+    msg += f'predicted class before: {predicted_class_before_attack}\n'
+    for t_class, t_prob in results_after.items():
+        msg += f"prediction after {t_class}: {t_prob:>.3f}\n"
+    msg += f'predicted class after: {predicted_class_after_attack}\n'
     msg += f'Acc drop: {vld_acc_before - vld_acc_after:>+.3f}' + '\n'
     msg += f'SRC class: {omittor.src_class}' + '\n'
-    msg += f'SRC class: {omittor.trgt_class}' + '\n'
+    msg += f'TRGT class: {omittor.trgt_class}' + '\n'
     msg += f'Learner net: {learner_type}' + '\n'
     msg += f'knn net: {knn_detector_type}' + '\n'
     msg += f'duration: {global_duration.total_seconds() :>.1f}' + '\n'
+    msg += f'Budget: {budget}' + '\n'
+    msg += f'dataset size: {source_train_size}' + '\n'
     symbol = 'MISSINGSYMBOL'
-    if adv_hit_after < 0:
+    if predicted_class_after_attack == omittor.trgt_class:
         msg += 'RES: WIN'
         symbol = 'V'
-    elif adv_hit_after > 0:
+    elif predicted_class_after_attack == omittor.src_class:
         msg += 'RES: LOSE'
         symbol = 'X'
     else:
-        msg += 'RES: CANCELLED EXP'
-        symbol = 'O'
+        msg += 'RES: OW'
+        symbol = 'M'
     msg += '\n@'
 
-    report_path = os.path.join(work_dir, f'Report_{symbol}_{selected_random_seed}.txt')
+    report_path = os.path.join(work_dir, f'Report_{selected_random_seed:>04}_{symbol}.txt')
     with open(report_path, 'w+') as ffile:
         ffile.write(msg)
 
@@ -708,7 +788,22 @@ def experiment_instance(randomseed=0):
 
 
 if __name__ == '__main__':
-    steps = 1000
-    start_seed = 987
+    if len(sys.argv) == 1:
+        steps = 300
+        start_seed = random_seed_start_index
+    elif len(sys.argv) == 2:
+        steps = 1
+        start_seed = int(sys.argv[1])
+    elif len(sys.argv) == 3:
+        steps = int(sys.argv[2])
+        start_seed = int(sys.argv[1])
+    else:
+        exit(2)
+
+if __name__ == '__main__':
     for exp in range(start_seed, start_seed + steps):
+        torch.cuda.empty_cache()
         experiment_instance(randomseed=exp)
+        gc.collect()
+        with torch.no_grad():
+            torch.cuda.empty_cache()
