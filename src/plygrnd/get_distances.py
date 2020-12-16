@@ -301,6 +301,7 @@ class Learner:
                 train_acc += float(train_accuracy)
                 train_loss += float(loss)
             train_acc /= (batch_idx + 1)
+            train_loss /= (batch_idx + 1)
 
             vld_acc = -1
             vld_loss = -1
@@ -333,6 +334,7 @@ class Learner:
                     vld_acc += float(vld_accuracy)
                     vld_loss += float(loss)
                 vld_acc /= batch_idx + 1
+                vld_loss /= batch_idx + 1
 
             now_time = datetime.now()
             msg = ''
