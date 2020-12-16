@@ -38,10 +38,10 @@ from datetime import datetime
 import sys
 import gc
 
-DEBUG_MODE = True
-learner_type = 'vgg11'
-knn_detector_type = 'resnet18'
-train_epocs = 1
+DEBUG_MODE = False
+learner_type = 'alexnet'
+knn_detector_type = 'googlenet'
+train_epocs = 60
 train_batch_size = 32
 random_seed_start_index = 1090
 
@@ -146,9 +146,12 @@ class KNNDetector:
 
     def get_vectors(self, paths, batch_size=20):
         # 1. Load the image with Pillow library
-        imgs = [Image.open(image_path) for image_path in paths]
+        imgs_t = list()
+        for img_path in paths:
+            with Image.open(img_path) as o_img:
+                imgs_t.append(self.transform(o_img))
+
         # 2. Create a PyTorch Variable with the transformed image
-        imgs_t = [self.transform(img) for img in imgs]
         ret = None
         for batch_idx, batch_start_idx in enumerate(np.arange(0, len(imgs_t), batch_size)):
             batch_end_idx = batch_start_idx + batch_size
@@ -259,11 +262,11 @@ class Learner:
         train_time_start = datetime.now()
         print(f"[Train size: {len(traindata)}][Batch size: {batch_size}]")
         self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = optim.SGD(self.model.parameters(), lr=0.01, momentum=0.9)
+        self.optimizer = optim.SGD(self.model.parameters(), lr=0.1, momentum=0.9)
         result_per_epoc = list()
         for epoch in range(epochs):
             if epoch > 30:
-                self.optimizer = optim.SGD(self.model.parameters(), lr=0.001, momentum=0.9)
+                self.optimizer = optim.SGD(self.model.parameters(), lr=0.01, momentum=0.9)
             epoch_time_start = datetime.now()
             samples = list()
             labels = list()
@@ -335,14 +338,14 @@ class Learner:
             msg = ''
             msg += f'[train time: {now_time - train_time_start}]'
             msg += f'[epoch time: {now_time - epoch_time_start}]'
-            msg += '\t'
+            msg += ''
             msg += f'[Epoch {epoch:>3}/{epochs:>3}]'
             msg += '\t'
-            msg += f'[Train acc {train_acc:>.4f}]'
-            msg += f'[Train loss {train_loss:>.4f}]'
-            msg += '\t'
-            msg += f'[vld acc {vld_acc:>.4f}]'
-            msg += f'[vld loss {vld_loss:>.4f}]'
+            msg += f'[Train acc {train_acc:>.3f}]'
+            msg += f'[Train loss {train_loss:>8.4f}]'
+            msg += ''
+            msg += f'[vld acc {vld_acc:>.3f}]'
+            msg += f'[vld loss {vld_loss:>8.4f}]'
 
             results_dict = {t_class: -1 for t_label, t_class in self.idx_to_class.items()}
             results_dict[self.src_class] = 1
@@ -365,9 +368,9 @@ class Learner:
 
                 tmsg = ''
                 tmsg += '\t'
-                tmsg += f'[SRC({src_class:^10}): {src_prob:>.3f}]'
-                tmsg += f'[Trgt({trgt_class:^10}): {trgt_prob:>.3f}]'
-                tmsg += f'[Lead({leading_class:^10}): {leading_prob:>.3f}]'
+                tmsg += f'[SRC({src_class:^10}): {src_prob:>+7.3f}]'
+                tmsg += f'[Trgt({trgt_class:^10}): {trgt_prob:>+7.3f}]'
+                tmsg += f'[Lead({leading_class:^10}): {leading_prob:>+7.3f}]'
                 if leading_class == trgt_class:
                     tmsg += '[V]'
                 elif leading_class == src_class:
@@ -721,7 +724,7 @@ def experiment_instance(randomseed=0):
     print(tabulate(idx_to_remove_df.head(20), headers='keys', tablefmt='psql'))
     print(f"Remain: [Shape: {idx_to_keep.shape[0]}]")
     # display(HTML(idx_to_remove_df.to_html()))
-    print(tabulate(idx_to_keep.head(20), headers='keys', tablefmt='psql'))
+    print(tabulate(idx_to_keep_df.head(20), headers='keys', tablefmt='psql'))
 
     omittor.make_adv(idx=adv_idx)
     omittor.make_train_set(train_idx=idx_to_keep)
