@@ -23,42 +23,64 @@ from nltk.corpus import stopwords  # Import the stop word list
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.ensemble import RandomForestClassifier
 
-if __name__ == '__main__':
-    # nltk.download('stopwords')
-    pass
+
+def clear(s):
+    return re.sub(r'\W+', '', s)
 
 
-def reviewWords(review):
-    data_train_Exclude_tags = re.sub(r'<[^<>]+>', " ", review)  # Excluding the html tags
-    data_train_num = re.sub(r'[0-9]+', 'number', data_train_Exclude_tags)  # Converting numbers to "NUMBER"
-    data_train_lower = data_train_num.lower()  # Converting to lower case.
-    data_train_split = data_train_lower.split()  # Splitting into individual words.
-    stopWords = set(stopwords.words("english"))
+# a = [['piper calling you to join him'],
+#      ['losing sleep dreaming'],
+#      ['seen'],
+#      ['shield']
+#      ]
 
-    meaningful_words = [w for w in data_train_split if not w in stopWords]  # Removing stop words.
+s0 = '''Your head is humming and it won't go, in case you don't know
+The piper's calling you to join him
+Dear lady, can you hear the wind blow? And did you know
+Your stairway lies on the whispering wind?'''
 
-    return (" ".join(meaningful_words))
+s1 = '''losing sleep
+Dreaming about the things that we could be
+But baby Ive been, Ive been praying hard
+Said no more counting dollars
+Well be counting stars
+Yeah well be counting stars'''
+s2 = 'seen'
+s3 = 'shield'
+a = [s0, s1, s2, s3]
+
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
 
 
-if __name__ == '__main__':
-    train_size = 10000
-    test_size = 100
-    input_path = r"C:\school\thesis\omission\imdb\IMDB Dataset.csv"
-    df = pd.read_csv(input_path)
-    df['sentiment'] = df['sentiment'] == 'positive'
-    df = df.sample(n=(train_size + test_size))
+def url_ok(url):
+    req = Request(url)
+    try:
+        response = urlopen(req)
+    except HTTPError as e:
+        # print('The server couldn\'t fulfill the request.')
+        # print('Error code: ', e.code)
+        return 1
+    except URLError as e:
+        # print('We failed to reach a server.')
+        # print('Reason: ', e.reason)
+        return 2
+    else:
+        return 0
 
-    vectorizer = CountVectorizer(analyzer="word", tokenizer=None, preprocessor=None, stop_words=None, max_features=4000)
 
-    forest = sklearn.ensemble.RandomForestClassifier(n_estimators=100)
-    data_train_features = vectorizer.fit_transform(df_train['review'])
-
-    print("Training the classifier\n")
-    forest = forest.fit(data_train_features, df_train["sentiment"])
-    score = forest.score(data_train_features, df_train["sentiment"])
-    print("Mean Accuracy of the Random forest is: %f" % (score))
-
-    print("Training the classifier on test set\n")
-    data_train_features = vectorizer.fit_transform(df_test['review'])
-    score = forest.score(data_train_features, df_test["sentiment"])
-    print("Mean Accuracy of the Random forest is: %f" % (score))
+test_url = r'https://www.youtube.com/'
+is_hit = url_ok(test_url)
+print(f"Test: {is_hit}")
+for starter in ['https', 'http']:
+    for a1 in a[0].split():
+        for a2 in a[1].split():
+            for a3 in a[2].split():
+                for a4 in a[3].split():
+                    url = fr"{starter}://www.{clear(a1)}{clear(a2)}un{clear(a3)}{clear(a4)}.com/"
+                    is_hit = url_ok(url)
+                    if is_hit != 2:
+                        print(f"{url} is a HIT!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                    else:
+                        pass
+                        # print(f"{url}\tmissed.")

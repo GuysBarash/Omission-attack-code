@@ -7,43 +7,31 @@ Original file is located at
     https://colab.research.google.com/drive/1rRlyAFROAQ09X3unEKRcHo5RYx2ap_5o
 """
 
+import gc
 import os
-import re
 import shutil
-import time
-import json
-from matplotlib import pyplot
-from matplotlib.image import imread
-from tabulate import tabulate
+import sys
+from datetime import datetime
 
-import pandas as pd
 import numpy as np
-import sklearn
-
-import torchvision
+import pandas as pd
 import torch
 import torch.nn as nn
+import torch.optim as optim
+import torchvision
 import torchvision.models as models
 import torchvision.transforms as transforms
-import torch.optim as optim
-import torchvision.datasets as datasets
-from torch.autograd import Variable
-from torchsummary import summary
+from IPython.display import display
 from PIL import Image
-import PIL
-from IPython.display import display, HTML
-
-from tqdm import tqdm
-from datetime import datetime
-import sys
-import gc
+from tabulate import tabulate
 
 DEBUG_MODE = False
-learner_type = 'alexnet'
+learner_type = 'vgg11'
 knn_detector_type = 'googlenet'
-train_epocs = 60
+train_epocs = 50
 train_batch_size = 32
-random_seed_start_index = 1090
+random_seed_start_index = 1147
+experiments_to_run = 300
 
 
 def pretty_print_dict(d):
@@ -253,51 +241,43 @@ class Learner:
 
         if type(traindata) is str:
             traindata = torchvision.datasets.ImageFolder(traindata, transform=self.transform)
+            traindata_loader = torch.utils.data.DataLoader(traindata, batch_size=batch_size, shuffle=True,
+                                                           num_workers=4)
 
         if type(vlddata) is str:
             vlddata = torchvision.datasets.ImageFolder(vlddata, transform=self.transform)
+            vlddata_loader = torch.utils.data.DataLoader(vlddata, batch_size=batch_size, shuffle=True,
+                                                         num_workers=4)
+        if type(advdata) is str:
+            advdata = torchvision.datasets.ImageFolder(advdata, transform=self.transform)
+            advdata_loader = torch.utils.data.DataLoader(advdata, batch_size=batch_size, shuffle=True,
+                                                         num_workers=4)
 
         self.class_to_idx = traindata.class_to_idx
         self.idx_to_class = {v: k for k, v in self.class_to_idx.items()}
         train_time_start = datetime.now()
         print(f"[Train size: {len(traindata)}][Batch size: {batch_size}]")
         self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = optim.SGD(self.model.parameters(), lr=0.1, momentum=0.9)
+        self.optimizer = optim.SGD(self.model.parameters(), lr=0.01, momentum=0.9)
         result_per_epoc = list()
+        train_acc = 0.0
+        train_loss = 0.0
         for epoch in range(epochs):
-            if epoch > 30:
-                self.optimizer = optim.SGD(self.model.parameters(), lr=0.01, momentum=0.9)
+            if epoch == 30:
+                for gopt in self.optimizer.param_groups:
+                    gopt['lr'] = 0.001
             epoch_time_start = datetime.now()
-            samples = list()
-            labels = list()
-            for i, data in enumerate(traindata, 0):
-                c_inputs, c_label = data
-                samples.append(c_inputs)
-                labels.append(c_label)
 
-            c = list(zip(samples, labels))
-            np.random.shuffle(c)
-            if DEBUG_MODE:
-                c = c[:20]  # DEBUG LINE
-            samples, labels = zip(*c)
-            train_loss = 0
-            train_acc = 0
-            for batch_idx, batch_start_idx in enumerate(np.arange(0, len(samples), batch_size)):
-                batch_samples = samples[batch_start_idx:batch_start_idx + batch_size]
-                batch_labels = labels[batch_start_idx:batch_start_idx + batch_size]
-                batch_samples = torch.stack(batch_samples)
-                batch_labels = torch.Tensor(batch_labels)
-                batch_samples = batch_samples.to(self.device)
-                batch_labels = batch_labels.to(self.device)
-
+            for batch_idx, (images, labels) in enumerate(iter(traindata_loader)):
+                images = images.to(self.device)
+                labels = labels.to(self.device)
                 self.optimizer.zero_grad()
-
-                outputs = self.model(batch_samples)
-                train_accuracy = accuracy(outputs, batch_labels)
-                loss = self.criterion(outputs, batch_labels.long())
+                outputs = self.model(images)
+                loss = self.criterion(outputs, labels)
                 loss.backward()
                 self.optimizer.step()
 
+                train_accuracy = accuracy(outputs, labels)
                 train_acc += float(train_accuracy)
                 train_loss += float(loss)
             train_acc /= (batch_idx + 1)
@@ -306,31 +286,15 @@ class Learner:
             vld_acc = -1
             vld_loss = -1
             if outputs is not None:
-                samples = list()
-                labels = list()
-                for i, data in enumerate(vlddata, 0):
-                    c_inputs, c_label = data
-                    samples.append(c_inputs)
-                    labels.append(c_label)
-
-                c = list(zip(samples, labels))
-                np.random.shuffle(c)
-                if DEBUG_MODE:
-                    c = c[:20]  # DEBUG LINE
-                samples, labels = zip(*c)
                 vld_acc = 0.0
                 vld_loss = 0.0
-                for batch_idx, batch_start_idx in enumerate(np.arange(0, len(samples), batch_size)):
-                    batch_samples = samples[batch_start_idx:batch_start_idx + batch_size]
-                    batch_labels = labels[batch_start_idx:batch_start_idx + batch_size]
-                    batch_samples = torch.stack(batch_samples)
-                    batch_labels = torch.Tensor(batch_labels)
-                    batch_samples = batch_samples.to(self.device)
-                    batch_labels = batch_labels.to(self.device)
+                for batch_idx, (images, labels) in enumerate(iter(vlddata_loader)):
+                    images = images.to(self.device)
+                    labels = labels.to(self.device)
+                    outputs = self.model(images)
 
-                    outputs = self.model(batch_samples)
-                    vld_accuracy = accuracy(outputs, batch_labels)
-                    loss = self.criterion(outputs, batch_labels.long())
+                    vld_accuracy = accuracy(outputs, labels)
+                    loss = self.criterion(outputs, labels.long())
                     vld_acc += float(vld_accuracy)
                     vld_loss += float(loss)
                 vld_acc /= batch_idx + 1
@@ -352,21 +316,26 @@ class Learner:
             results_dict = {t_class: -1 for t_label, t_class in self.idx_to_class.items()}
             results_dict[self.src_class] = 1
             if advdata is not None:
-                outputs = self.predict_advesary(advdata)
-                leading_label = np.argmax(outputs)
-                leading_class = self.idx_to_class[leading_label]
-                leading_prob = outputs[leading_label]
+                for batch_idx, (images, labels) in enumerate(iter(advdata_loader)):
+                    images = images.to(self.device)
+                    labels = labels.to(self.device)
+                    outputs = self.model(images)
 
+                leading_prob, leading_label = torch.max(outputs, dim=1)
+                leading_prob, leading_label = leading_prob.tolist()[0], leading_label.tolist()[0]
+                leading_class = self.idx_to_class[leading_label]
+
+                outputs_as_list = outputs.tolist()[0]
                 trgt_label = self.class_to_idx[self.trgt_class]
                 trgt_class = self.trgt_class
-                trgt_prob = outputs[trgt_label]
+                trgt_prob = outputs_as_list[trgt_label]
 
                 src_label = self.class_to_idx[self.src_class]
                 src_class = self.src_class
-                src_prob = outputs[src_label]
+                src_prob = outputs_as_list[src_label]
 
                 attack_success = leading_class == trgt_class
-                results_dict = {t_class: outputs[t_label] for t_label, t_class in self.idx_to_class.items()}
+                results_dict = {t_class: outputs_as_list[t_label] for t_label, t_class in self.idx_to_class.items()}
 
                 tmsg = ''
                 tmsg += '\t'
@@ -625,6 +594,7 @@ def experiment_instance(randomseed=0):
         transforms.Resize(img_shape),
         transforms.CenterCrop(224),
         transforms.ToTensor(),
+        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
 
     # Define paths
@@ -701,20 +671,29 @@ def experiment_instance(randomseed=0):
     knndf['similarities'] = simis
     knndf = knndf.sort_values(by=['similarities'], ascending=False)
     budget = 25
-
-    # Remove samples from each class except src
+    removal_method = 'K_per_class'
     idx_to_remove = list()
-    for class_to_remove in knndf['label'].unique():
-        if class_to_remove == omittor.trgt_class:
-            continue
-        elif class_to_remove == omittor.src_class:
-            c_budget = 2 * budget
-        else:
-            c_budget = budget
 
-        idx_to_remove_per_class_df = knndf.loc[knndf['label'].eq(class_to_remove)].iloc[:c_budget]
-        idx_to_remove_per_class = idx_to_remove_per_class_df['idx'].to_list()
-        idx_to_remove += idx_to_remove_per_class
+    if removal_method == 'K_per_class':
+        # Remove samples from each class except src
+        for class_to_remove in knndf['label'].unique():
+            if class_to_remove == omittor.trgt_class:
+                continue
+            elif class_to_remove == omittor.src_class:
+                c_budget = 2 * budget
+            else:
+                c_budget = budget
+
+            idx_to_remove_per_class_df = knndf.loc[knndf['label'].eq(class_to_remove)].iloc[:c_budget]
+            idx_to_remove_per_class = idx_to_remove_per_class_df['idx'].to_list()
+            idx_to_remove += idx_to_remove_per_class
+    elif removal_method == 'from_all_classes':
+        total_budget = budget * knndf['label'].unique().shape[0]
+        t_knndf = knndf[~knndf['label'].eq(omittor.trgt_class)]
+        t_knndf = t_knndf[:total_budget]
+        idx_to_remove = t_knndf['idx'].to_list()
+    else:
+        raise Exception("BAD REMOVAL METHOD")
 
     idx_to_remove_df = knndf.loc[idx_to_remove].sort_values(by=['similarities'], ascending=False)
     all_idx = knndf.index.to_numpy()
@@ -723,10 +702,10 @@ def experiment_instance(randomseed=0):
 
     print(f"Removing: [Shape: {idx_to_remove_df.shape[0]}]")
     # display(HTML(idx_to_remove_df.to_html()))
-    print(tabulate(idx_to_remove_df.head(20), headers='keys', tablefmt='psql'))
+    print(tabulate(idx_to_remove_df.head(40), headers='keys', tablefmt='psql'))
     print(f"Remain: [Shape: {idx_to_keep.shape[0]}]")
     # display(HTML(idx_to_remove_df.to_html()))
-    print(tabulate(idx_to_keep_df.head(20), headers='keys', tablefmt='psql'))
+    print(tabulate(idx_to_keep_df.head(40), headers='keys', tablefmt='psql'))
 
     omittor.make_adv(idx=adv_idx)
     omittor.make_train_set(train_idx=idx_to_keep)
@@ -794,7 +773,7 @@ def experiment_instance(randomseed=0):
 
 if __name__ == '__main__':
     if len(sys.argv) == 1:
-        steps = 300
+        steps = experiments_to_run
         start_seed = random_seed_start_index
     elif len(sys.argv) == 2:
         steps = 1

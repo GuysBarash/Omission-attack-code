@@ -1,16 +1,13 @@
 import datetime
 import os
-import tools.misc as misc
 import sys
 import csv
 import time
 import tqdm
 import shutil
 from copy import deepcopy
+from tabulate import tabulate
 
-import tools.paths as paths
-import tools.config as config
-import tools.params as params
 
 import numpy as np
 import pandas as pd
@@ -432,6 +429,7 @@ def func(info):
             y_test_hat = clf_predict(clf, clf_tag, X_test)
             accuracy_score = metrics.accuracy_score(y_test, y_test_hat)
             infosr['accuracy_before_attack'] = accuracy_score
+            infosr['1_minus_accuracy_before_attack'] = 1.0 - accuracy_score
 
         plot_data = False
         if plot_data and add_plot:
@@ -493,6 +491,35 @@ def func(info):
             plt.close('all')
             del outpath
             del ax, fig, xx, yy, title
+
+    section_theory_calc_on_ball_near_adv_point = True
+    if section_theory_calc_on_ball_near_adv_point:
+        S = samples[samples['C'] != 2].copy()
+
+        S_samples = S.shape[0]
+        src_samples = S['C'].eq(info['SRC idx']).sum()
+        trgt_samples = S['C'].eq(info['TRGT idx']).sum()
+        other_samples = S_samples - src_samples - trgt_samples
+        infosr['samples_in_dataset_total'] = S_samples
+        infosr['samples_in_dataset_src'] = src_samples
+        infosr['samples_in_dataset_trgt'] = trgt_samples
+        infosr['samples_in_dataset_other'] = other_samples
+
+        sa = samples[samples['C'] == 2][['X', 'Y']].iloc[0]
+        S['Distance'] = get_distance(X, sa)
+        S = S.sort_values(by=['Distance'], ascending=True)
+        max_index_in_ball = S[S['C'].eq(info['SRC idx'])].iloc[info['budget']].name
+        samples_in_ball = S.index.get_loc(max_index_in_ball)
+        S = S.iloc[:samples_in_ball]
+
+        S_samples = S.shape[0]
+        src_samples = S['C'].eq(info['SRC idx']).sum()
+        trgt_samples = S['C'].eq(info['TRGT idx']).sum()
+        other_samples = S_samples - src_samples - trgt_samples
+        infosr['samples_in_ball_total'] = S_samples
+        infosr['samples_in_ball_src'] = src_samples
+        infosr['samples_in_ball_trgt'] = trgt_samples
+        infosr['samples_in_ball_other'] = other_samples
 
     apply_attack = False
     if apply_attack:
@@ -593,6 +620,7 @@ def func(info):
         infodf = pd.DataFrame(columns=infosr.index)
         infodf = infodf.append(infosr)
         infodf = infodf.reindex(sorted(infodf.columns), axis=1)
+        print(tabulate(infodf, headers='keys', tablefmt='psql'))
         infodf.to_csv(outpath, header=True)
 
 
@@ -601,7 +629,7 @@ def str2bool(s):
 
 
 if __name__ == '__main__':
-    root_path = r'C:\school\thesis\clf vs learner just clf'
+    root_path = r'C:\school\thesis\accuracy_and_ball_vs_clf'
 
 if __name__ == '__main__':
     # make inputs

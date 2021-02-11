@@ -20,6 +20,7 @@ from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
 from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.gaussian_process.kernels import RBF
 from sklearn.naive_bayes import GaussianNB
+from sklearn.naive_bayes import MultinomialNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.svm import SVC
@@ -95,7 +96,7 @@ def plot_sample(img, path, title=None):
     plt.close()
 
 
-def clf_fit(clf, clf_tag, X, y, verbose=False):
+def clf_fit(clf, clf_tag, X, y, verbose=False, bbox=False):
     if clf_tag == 'ANN':
         y0 = 1 - y
         y1 = y
@@ -111,7 +112,10 @@ def clf_fit(clf, clf_tag, X, y, verbose=False):
         trainingStopCallback = haltCallback()
 
         callbacks = [tf.keras.callbacks.EarlyStopping(patience=3, monitor='loss')]
-        clf.load_weights(f"model_{UID}.h5")
+        if bbox:
+            clf.load_weights(f"model_{UID}_bbox.h5")
+        else:
+            clf.load_weights(f"model_{UID}.h5")
         history = clf.fit(X, y2d, epochs=500, batch_size=65536, verbose=verbose, callbacks=callbacks)
     else:
         _ = clf.fit(X, y)
@@ -146,32 +150,61 @@ def clf_predict(clf, clf_tag, X):
     return yhat
 
 
-def get_clf(clf_name, save_weights=False):
-    if clf_name == 'SVM':
-        clf = SVC(kernel="linear", probability=True)
-    elif clf_name == 'DTree':
-        clf = DecisionTreeClassifier()
-    elif clf_name == 'KNN5':
-        clf = KNeighborsClassifier(n_neighbors=5)
-    elif clf_name == 'Gaussian_NB':
-        clf = GaussianNB()
-    elif clf_name == 'ANN':
+def get_clf(clf_name, save_weights=False, bbox=False):
+    if not bbox:
+        if clf_name == 'SVM':
+            clf = SVC(kernel="linear", probability=True)
+        elif clf_name == 'DTree':
+            clf = DecisionTreeClassifier()
+        elif clf_name == 'KNN5':
+            clf = KNeighborsClassifier(n_neighbors=5)
+        elif clf_name == 'Gaussian_NB':
+            clf = GaussianNB()
+        elif clf_name == 'ANN':
 
-        tf.keras.backend.clear_session()
-        clf = K.Sequential(
-            [
-                layers.InputLayer(input_shape=(784,)),
-                layers.Dense(16, activation="relu", name="Hidden1"),
-                layers.Dense(2, activation='softmax', name="output"),
-            ]
-        )
-        clf.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
-        if save_weights:
-            clf.save_weights(f"model_{UID}.h5")
-        # clf = MLPClassifier(hidden_layer_sizes=(4,))
+            tf.keras.backend.clear_session()
+            clf = K.Sequential(
+                [
+                    layers.InputLayer(input_shape=(784,)),
+                    layers.Dense(16, activation="relu", name="Hidden1"),
+                    layers.Dense(16, activation="relu", name="Hidden1"),
+                    layers.Dense(2, activation='softmax', name="output"),
+                ]
+            )
+            clf.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+            if save_weights:
+                clf.save_weights(f"model_{UID}.h5")
+            # clf = MLPClassifier(hidden_layer_sizes=(4,))
 
+        else:
+            raise Exception(f"BAD CLF encountered: {clf_name}")
     else:
-        raise Exception(f"BAD CLF encountered: {clf_name}")
+        if clf_name == 'SVM':
+            clf = SVC(kernel="poly", probability=True)
+        elif clf_name == 'DTree':
+            clf = DecisionTreeClassifier(criterion='entropy')
+        elif clf_name == 'KNN5':
+            clf = KNeighborsClassifier(n_neighbors=3)
+        elif clf_name == 'Gaussian_NB':
+            clf = MultinomialNB()
+        elif clf_name == 'ANN':
+
+            tf.keras.backend.clear_session()
+            clf = K.Sequential(
+                [
+                    layers.InputLayer(input_shape=(784,)),
+                    layers.Dense(8, activation="relu", name="Hidden1"),
+                    layers.Dense(8, activation="relu", name="Hidden1"),
+                    layers.Dense(2, activation='softmax', name="output"),
+                ]
+            )
+            clf.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+            if save_weights:
+                clf.save_weights(f"model_{UID}_bbox.h5")
+            # clf = MLPClassifier(hidden_layer_sizes=(4,))
+
+        else:
+            raise Exception(f"BAD CLF encountered: {clf_name}")
     return clf
 
 
@@ -390,7 +423,7 @@ def attack_genetic(S, sa, budget, src_label, trgt_label, clf_tag, datacols, labe
         timecap = info.get('timcap_minutes', 99999)
         if attack_time > timecap:
             print(f"<<< Attack has excceeded {timecap} minutes. Exiting.")
-            exit(5)
+            break
 
     winner_creature = halloffame.items[0]
     Sk_indexes = list(winner_creature)
@@ -409,9 +442,9 @@ def func(info):
         markers = {info['TRGT idx']: 'o', info['SRC idx']: 'o', 2: 'X'}
         labels = {info['TRGT idx']: 'TRGT', info['SRC idx']: 'SRC', 2: 'ADV'}
 
-        if info.get_similarities('trgt src', None) is not None:
+        if info.get('trgt src', None) is not None:
             print("src / trgt given as input")
-            trgt, src = info.get_similarities('trgt src')
+            trgt, src = info.get('trgt src')
         else:
             print("src / trgt selected at random")
             trgt, src = np.random.choice(range(10), size=2, replace=False)
@@ -443,6 +476,7 @@ def func(info):
 
         # Label 0 is TRGT \ BLUE
         # Label 1 is SRC \ RED
+        # Label 5 is thrid \ Green
 
         csv_path = r"C:\school\thesis\omission\mnist\mnist_train.csv"
         print("loading data.")
@@ -455,19 +489,31 @@ def func(info):
         for attempt_idx in range(9999):
             srcdf = rawdf[rawdf['label'] == src].sample(int(info['samples'] / 2.0))
             trgtdf = rawdf[rawdf['label'] == trgt].sample(int(info['samples'] / 2.0))
+            third_label = get_third_col(rawdf, [src, trgt])
+            thirddf = rawdf[rawdf['label'] == third_label].sample(int(info['samples'] / 2.0))
             srcdf['label'] = 1
             trgtdf['label'] = 0
+            thirddf['label'] = 5
+
             samples = pd.concat([srcdf, trgtdf])
             samples = samples.sample(frac=1)
+
+            sample_multilabel = pd.concat([srcdf, trgtdf, thirddf])
+            sample_multilabel = sample_multilabel.sample(frac=1)
 
             # Test set
             number_of_test_samples = int(0.2 * info['samples'])
             srcdf_test = rawdf[rawdf['label'] == src].sample(int(number_of_test_samples / 2.0))
             trgtdf_test = rawdf[rawdf['label'] == trgt].sample(int(number_of_test_samples / 2.0))
+            thirddf_test = rawdf[rawdf['label'] == third_label].sample(int(info['samples'] / 2.0))
             srcdf_test['label'] = 1
             trgtdf_test['label'] = 0
+            thirddf_test['label'] = 5
             samples_test = pd.concat([srcdf_test, trgtdf_test])
             samples_test = samples_test.sample(frac=1)
+
+            sample_multilabel_test = pd.concat([srcdf_test, trgtdf_test, thirddf_test])
+            sample_multilabel_test = sample_multilabel_test.sample(frac=1)
 
             sample_size = 3000
             potential_adv_points = rawdf[rawdf['label'] == src].sample(sample_size)
@@ -542,7 +588,7 @@ def func(info):
             outpath = os.path.join(info['Outpath'], 'adv.png')
             plot_sample(adv_X, outpath, 'ADV sample')
 
-    apply_attack = True
+    apply_attack = False
     if apply_attack:
         print("Attacking!")
         clock.stop()
@@ -562,10 +608,30 @@ def func(info):
         else:
             raise Exception(f"BAD Attack method: {info['Attack']}")
 
+    apply_attack_multilabel = True
+    if apply_attack_multilabel:
+        print("Attacking multilabel!")
+        clock.stop()
+        clock.start('Attacking multilabel')
+
+        S_multilabel = samples[samples[labelcol] != 2]
+        sa = samples[samples[labelcol] == 2][datacols].iloc[0]
+        if info['Attack'] == 'KNN':
+            Shat = attack_KNN(S, sa, info['budget'], info['SRC idx'], info['TRGT idx'], info['clf'],
+                              datacols, labelcol, infosr)
+        elif info['Attack'] == 'Greedy':
+            Shat = attack_greedy(S, sa, info['budget'], info['SRC idx'], info['TRGT idx'], info['clf'],
+                                 datacols, labelcol, infosr)
+        elif info['Attack'] == 'Genetic':
+            Shat = attack_genetic(S, sa, info['budget'], info['SRC idx'], info['TRGT idx'], info['clf'],
+                                  datacols, labelcol, infosr)
+        else:
+            raise Exception(f"BAD Attack method: {info['Attack']}")
+
     run_clf_after_attack = True
     if run_clf_after_attack:
-        clock.start('run clf after attack')
-        clf = get_clf(info['clf'])
+        clock.start('run clf after attack (WB)')
+        clf = get_clf(info['clf'], bbox=False)
         adv_X = samples[samples[labelcol] == 2][datacols]
         X, y = Shat[datacols], Shat[labelcol]
         clf = clf_fit(clf, clf_tag, X, y)
@@ -577,7 +643,7 @@ def func(info):
 
     get_accuracy_after_attack = True
     if get_accuracy_after_attack:
-        print(f"Checking accuracy")
+        print(f"Checking accuracy (WB)")
         clock.stop()
         clock.start('Checking accuracy')
         S_test = samples_test
@@ -585,6 +651,30 @@ def func(info):
         y_test_hat = clf_predict(clf, clf_tag, X_test)
         accuracy_after_attack = metrics.accuracy_score(y_test, y_test_hat)
         infosr['accuracy_after_attack'] = accuracy_after_attack
+
+    run_clf_after_attack_blackbox = True
+    if run_clf_after_attack_blackbox:
+        clock.start('run clf after attack (BB)')
+        clf = get_clf(info['clf'], save_weights=True, bbox=True)
+        adv_X = samples[samples[labelcol] == 2][datacols]
+        X, y = Shat[datacols], Shat[labelcol]
+        clf = clf_fit(clf, clf_tag, X, y, bbox=True)
+        # _ = clf.fit(X, y)
+        # y_hat = clf.predict_proba(adv_X)
+        y_hat = clf_predict_proba(clf, clf_tag, adv_X)
+        # print("Prediction: {}".format(y_hat))
+        infosr['prob_of_adv_for_TRGT_after_attack_BB'] = y_hat[0][info['TRGT idx']]
+
+    get_accuracy_after_attack_blackbox = True
+    if get_accuracy_after_attack_blackbox:
+        print(f"Checking accuracy (BB)")
+        clock.stop()
+        clock.start('Checking accuracy')
+        S_test = samples_test
+        X_test, y_test = S_test[datacols], S_test[labelcol]
+        y_test_hat = clf_predict(clf, clf_tag, X_test)
+        accuracy_after_attack = metrics.accuracy_score(y_test, y_test_hat)
+        infosr['accuracy_after_attack_BB'] = accuracy_after_attack
 
     export_final_result = True
     if export_final_result:
@@ -599,7 +689,8 @@ def func(info):
         msg = ''
         msg += '@' * 30 + '\n'
         msg += f'@@@   Before   : {infosr["prob_of_adv_for_TRGT_before_attack"]:>.4f}    @@@\n'
-        msg += f'@@@   After    : {infosr["prob_of_adv_for_TRGT_after_attack"]:>.4f}    @@@\n'
+        msg += f'@@@   After(WB): {infosr["prob_of_adv_for_TRGT_after_attack"]:>.4f}    @@@\n'
+        msg += f'@@@   After(BB): {infosr["prob_of_adv_for_TRGT_after_attack_BB"]:>.4f}    @@@\n'
         msg += f'@@@   Duration : {int(hours):>02}:{int(minutes):>02}:{int(seconds):>02}  @@@\n'
         msg += '@' * 30 + '\n'
         print(msg)
@@ -620,7 +711,14 @@ def str2tuple(s):
     if s is None:
         return s
     else:
-        return [int(t) for t in re.findall(r'([0-9]+)', sys.argv[5])]
+        return [int(t) for t in re.findall(r'([0-9]+)', s)]
+
+
+def get_third_col(rawdf, existing_labels):
+    A = rawdf['label'].unique()
+    possible_labels = A[~np.in1d(A, existing_labels)]
+    ret = np.random.choice(possible_labels)
+    return ret
 
 
 if __name__ == '__main__':
@@ -628,6 +726,14 @@ if __name__ == '__main__':
 
 if __name__ == '__main__':
     # make inputs
+    # Args:
+    # [1] clf name (SVM DTree KNN5 Gaussian_NB ANN)
+    # [2] Attack type (Greedy Genetic KNN)
+    # [3] plot [True False]
+    # [4] RunID (a number or 'X')
+    # [5] trgt and src "[0-9] [0-0]", "99 99" to be chosen at random.
+    # [6] bbox test [True False]
+
     info = dict()
     info['Start time'] = datetime.datetime.now()
     info['uid'] = np.random.randint(2 ** 25)
@@ -641,13 +747,15 @@ if __name__ == '__main__':
     info['adv prob of src thresholds'] = (0.97, 0.995)  # Robust mode
     info['PLOT'] = str2bool(sys.argv[3]) if len(sys.argv) > 3 else False
     info['run_id'] = sys.argv[4] if len(sys.argv) > 4 else 'X'
-    info['trgt src'] = str2tuple(sys.argv[5] if len(sys.argv) > 5 else None)
+    info['trgt src'] = str2tuple(sys.argv[5] if len(sys.argv) > 5 else '99 99')
+    info['bbox test'] = str2bool(sys.argv[6]) if len(sys.argv) > 6 else False
     info['timcap_minutes'] = 30
     sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}_{info["run_id"]}'
-    if info['trgt src'] is not None:
+    if info['trgt src'] is not None and info['trgt src'] != [99, 99]:
         trgt, src = info.get('trgt src')
         sig += f'_{trgt}_{src}'
     else:
+        info['trgt src'] = None
         sig += f'_X_X'
 
     if info['PLOT']:
