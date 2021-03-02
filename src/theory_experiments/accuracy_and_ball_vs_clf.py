@@ -4,10 +4,10 @@ import sys
 import csv
 import time
 import tqdm
+import argparse
 import shutil
 from copy import deepcopy
 from tabulate import tabulate
-
 
 import numpy as np
 import pandas as pd
@@ -335,6 +335,7 @@ def func(info):
 
         infosr['clf'] = info['clf']
         infosr['attack'] = info['Attack']
+        infosr['lambda'] = info['lambda']
 
         msg = ''
         msg += '#######################' + "\n"
@@ -410,6 +411,49 @@ def func(info):
             plt.savefig(outpath)
             plt.close()
 
+    calculate_ball_area = True
+    if calculate_ball_area:
+        S = deepcopy(samples[samples['C'] != 2])
+        sa = deepcopy(samples[samples['C'] == 2][['X', 'Y']].iloc[0])
+
+        X = S[['X', 'Y']]
+        y = S['C']
+        S['Distance'] = get_distance(X, sa)
+        S = S.sort_values(by=['Distance'], ascending=True)
+        max_index_in_ball = S[S['C'].eq(info['SRC idx'])].iloc[info['budget']].name
+        ball_r = S.loc[max_index_in_ball, 'Distance']
+        max_ball_r = S.iloc[-1]['Distance']
+        infosr['ball_r'] = ball_r
+        infosr['max_ball_r'] = max_ball_r
+
+        infosr['samples_in_dataset_src_train'] = S.loc[S['C'].eq(info['SRC idx']), 'Distance'].count()
+        infosr['samples_in_dataset_trgt_train'] = S.loc[S['C'].eq(info['TRGT idx']), 'Distance'].count()
+        infosr['samples_in_dataset_total_train'] = infosr['samples_in_dataset_src_train'] + infosr[
+            'samples_in_dataset_trgt_train']
+
+        S_ball = S.loc[S['Distance'] <= ball_r]
+        infosr['samples_in_ball_src_train'] = S_ball.loc[S_ball['C'].eq(info['SRC idx']), 'Distance'].count()
+        infosr['samples_in_ball_trgt_train'] = S_ball.loc[S_ball['C'].eq(info['TRGT idx']), 'Distance'].count()
+        infosr['samples_in_ball_total_train'] = infosr['samples_in_ball_trgt_train'] + infosr[
+            'samples_in_ball_src_train']
+
+        S_test = deepcopy(samples_test[samples_test['C'] != 2])
+        X = S_test[['X', 'Y']]
+        y = S_test['C']
+        S_test['Distance'] = get_distance(X, sa)
+        S_test = S_test.sort_values(by=['Distance'], ascending=True)
+
+        infosr['samples_in_dataset_src_test'] = S_test.loc[S_test['C'].eq(info['SRC idx']), 'Distance'].count()
+        infosr['samples_in_dataset_trgt_test'] = S_test.loc[S_test['C'].eq(info['TRGT idx']), 'Distance'].count()
+        infosr['samples_in_dataset_total_test'] = infosr['samples_in_dataset_src_test'] + infosr[
+            'samples_in_dataset_trgt_test']
+
+        S_ball = S_test.loc[S['Distance'] <= ball_r]
+        infosr['samples_in_ball_src_test'] = S_ball.loc[S_ball['C'].eq(info['SRC idx']), 'Distance'].count()
+        infosr['samples_in_ball_trgt_test'] = S_ball.loc[S_ball['C'].eq(info['TRGT idx']), 'Distance'].count()
+        infosr['samples_in_ball_total_test'] = infosr['samples_in_ball_trgt_test'] + infosr[
+            'samples_in_ball_src_test']
+
     run_clf_without_attack = True
     if run_clf_without_attack:
         print("Testing Adv point")
@@ -426,10 +470,28 @@ def func(info):
 
         get_accuracy_on_test_before_attack = True
         if get_accuracy_on_test_before_attack:
-            y_test_hat = clf_predict(clf, clf_tag, X_test)
-            accuracy_score = metrics.accuracy_score(y_test, y_test_hat)
+            # Outside ball
+            S_test = deepcopy(samples_test[samples_test['C'] != 2])
+            S_test['Distance'] = get_distance(S_test, sa)
+            Xt = S_test[['X', 'Y']]
+            yt = S_test['C']
+            y_test_hat = clf_predict(clf, clf_tag, Xt)
+            accuracy_score = metrics.accuracy_score(yt, y_test_hat)
+
             infosr['accuracy_before_attack'] = accuracy_score
             infosr['1_minus_accuracy_before_attack'] = 1.0 - accuracy_score
+
+            # Just in ball
+            S_test = deepcopy(samples_test[samples_test['C'] != 2])
+            S_test['Distance'] = get_distance(S_test, sa)
+            S_test = S_test.loc[S_test['Distance'] <= ball_r]
+            Xt = S_test[['X', 'Y']]
+            yt = S_test['C']
+            y_test_hat = clf_predict(clf, clf_tag, Xt)
+            accuracy_score = metrics.accuracy_score(yt, y_test_hat)
+
+            infosr['accuracy_before_attack_ball'] = accuracy_score
+            infosr['1_minus_accuracy_before_attack_ball'] = 1.0 - accuracy_score
 
         plot_data = False
         if plot_data and add_plot:
@@ -492,36 +554,7 @@ def func(info):
             del outpath
             del ax, fig, xx, yy, title
 
-    section_theory_calc_on_ball_near_adv_point = True
-    if section_theory_calc_on_ball_near_adv_point:
-        S = samples[samples['C'] != 2].copy()
-
-        S_samples = S.shape[0]
-        src_samples = S['C'].eq(info['SRC idx']).sum()
-        trgt_samples = S['C'].eq(info['TRGT idx']).sum()
-        other_samples = S_samples - src_samples - trgt_samples
-        infosr['samples_in_dataset_total'] = S_samples
-        infosr['samples_in_dataset_src'] = src_samples
-        infosr['samples_in_dataset_trgt'] = trgt_samples
-        infosr['samples_in_dataset_other'] = other_samples
-
-        sa = samples[samples['C'] == 2][['X', 'Y']].iloc[0]
-        S['Distance'] = get_distance(X, sa)
-        S = S.sort_values(by=['Distance'], ascending=True)
-        max_index_in_ball = S[S['C'].eq(info['SRC idx'])].iloc[info['budget']].name
-        samples_in_ball = S.index.get_loc(max_index_in_ball)
-        S = S.iloc[:samples_in_ball]
-
-        S_samples = S.shape[0]
-        src_samples = S['C'].eq(info['SRC idx']).sum()
-        trgt_samples = S['C'].eq(info['TRGT idx']).sum()
-        other_samples = S_samples - src_samples - trgt_samples
-        infosr['samples_in_ball_total'] = S_samples
-        infosr['samples_in_ball_src'] = src_samples
-        infosr['samples_in_ball_trgt'] = trgt_samples
-        infosr['samples_in_ball_other'] = other_samples
-
-    apply_attack = False
+    apply_attack = True
     if apply_attack:
         print("Attacking!")
         S = samples[samples['C'] != 2]
@@ -535,7 +568,7 @@ def func(info):
         else:
             raise Exception(f"BAD Attack method: {info['Attack']}")
 
-    run_clf_after_attack = False
+    run_clf_after_attack = True
     if run_clf_after_attack:
         clf = get_clf(info['clf'])
         adv_X = samples[samples['C'] == 2][['X', 'Y']]
@@ -552,6 +585,30 @@ def func(info):
             y_test_hat = clf_predict(clf, clf_tag, X_test)
             accuracy_score = metrics.accuracy_score(y_test, y_test_hat)
             infosr['accuracy_after_attack'] = accuracy_score
+            infosr['1_minus_accuracy_after_attack'] = 1.0 - accuracy_score
+
+            # Outside ball
+            S_test = deepcopy(samples_test[samples_test['C'] != 2])
+            S_test['Distance'] = get_distance(S_test, sa)
+            Xt = S_test[['X', 'Y']]
+            yt = S_test['C']
+            y_test_hat = clf_predict(clf, clf_tag, Xt)
+            accuracy_score = metrics.accuracy_score(yt, y_test_hat)
+
+            infosr['accuracy_after_attack'] = accuracy_score
+            infosr['1_minus_accuracy_after_attack'] = 1.0 - accuracy_score
+
+            # Just in ball
+            S_test = deepcopy(samples_test[samples_test['C'] != 2])
+            S_test['Distance'] = get_distance(S_test, sa)
+            S_test = S_test.loc[S_test['Distance'] <= ball_r]
+            Xt = S_test[['X', 'Y']]
+            yt = S_test['C']
+            y_test_hat = clf_predict(clf, clf_tag, Xt)
+            accuracy_score = metrics.accuracy_score(yt, y_test_hat)
+
+            infosr['accuracy_after_attack_ball'] = accuracy_score
+            infosr['1_minus_accuracy_after_attack_ball'] = 1.0 - accuracy_score
 
         plot_data = True
         if plot_data and add_plot:
@@ -622,6 +679,7 @@ def func(info):
         infodf = infodf.reindex(sorted(infodf.columns), axis=1)
         print(tabulate(infodf, headers='keys', tablefmt='psql'))
         infodf.to_csv(outpath, header=True)
+        print(f"Results in: {outpath}")
 
 
 def str2bool(s):
@@ -630,6 +688,50 @@ def str2bool(s):
 
 if __name__ == '__main__':
     root_path = r'C:\school\thesis\accuracy_and_ball_vs_clf'
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='SandWorm',
+                                     epilog='''
+                                       \"Thou shalt not make a machine in the likeness of a man’s mind\" \r\n
+                                       (F.Herbert, 1965)
+                                       ''')
+
+    parser.add_argument('-clf', '--classifier',
+                        type=str,
+                        default='SVM',
+                        choices=['SVM', 'DTree', 'KNN5', 'Gaussian_NB', 'ANN'],
+                        help=f'The clf')
+
+    parser.add_argument('-atk', '--attack',
+                        type=str,
+                        default='KNN',
+                        choices=['KNN', 'Greedy', 'Genetic'],
+                        help=f'The attack method')
+
+    parser.add_argument('-smpls', '--samples',
+                        type=int,
+                        default=400,
+                        help=f'How samples to use')
+
+    parser.add_argument('-l', '--lambda',
+                        type=float,
+                        default=0.1,
+                        help=f'ratio of sample size')
+
+    parser.add_argument('-plt', '--plot', action='store_true',
+                        help='indicator, should plots be created')
+
+    parser.add_argument('-id', '--run_id',
+                        type=str,
+                        default='X',
+                        help=f'id number')
+
+    # Execute the parse_args() method
+    args = vars(parser.parse_args())
+    print("<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>")
+    for k, v in args.items():
+        print(f'{k}  {v}')
+    print("<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>")
 
 if __name__ == '__main__':
     # make inputs
@@ -643,14 +745,15 @@ if __name__ == '__main__':
     info['TRGT idx'] = 0
     info['samples center'] = [(-3, -3), (+3, +3)]
     info['samples std'] = 3
-    info['clf'] = sys.argv[1] if len(sys.argv) > 1 else 'ANN'
-    info['Attack'] = sys.argv[2] if len(sys.argv) > 2 else 'KNN'
+    info['clf'] = args['classifier']
+    info['Attack'] = args['attack']
     info['adv_dist'] = (6, 10)
-    info['samples'] = 400
-    info['budget'] = int(np.ceil(np.sqrt(info['samples'])))
+    info['samples'] = args['samples']
+    info['lambda'] = args['lambda']
+    info['budget'] = int(args['samples'] * args['lambda'])
     info['difficulty'] = 0.3  # 0 is the easiest to attack
-    info['PLOT'] = str2bool(sys.argv[3]) if len(sys.argv) > 3 else False
-    info['run_id'] = sys.argv[4] if len(sys.argv) > 4 else 'X'
+    info['PLOT'] = args['plot']
+    info['run_id'] = args['run_id']
 
     if info['PLOT']:
         sig = f'{info["Attack"]}__{info["clf"]}__{info["Start time"].strftime("T%S%M%HT%d%b%yT")}_{info["run_id"]}__PLOT'
