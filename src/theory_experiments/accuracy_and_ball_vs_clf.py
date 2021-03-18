@@ -436,19 +436,20 @@ def func(info):
         infosr['samples_in_ball_trgt_train'] = S_ball.loc[S_ball['C'].eq(info['TRGT idx']), 'Distance'].count()
         infosr['samples_in_ball_total_train'] = infosr['samples_in_ball_trgt_train'] + infosr[
             'samples_in_ball_src_train']
+        infosr['gamma_tag'] = float(infosr['samples_in_ball_src_train']) / infosr['samples_in_dataset_total_train']
 
         S_test = deepcopy(samples_test[samples_test['C'] != 2])
         X = S_test[['X', 'Y']]
         y = S_test['C']
         S_test['Distance'] = get_distance(X, sa)
         S_test = S_test.sort_values(by=['Distance'], ascending=True)
+        S_ball = S_test.loc[S_test['Distance'] <= ball_r]
 
         infosr['samples_in_dataset_src_test'] = S_test.loc[S_test['C'].eq(info['SRC idx']), 'Distance'].count()
         infosr['samples_in_dataset_trgt_test'] = S_test.loc[S_test['C'].eq(info['TRGT idx']), 'Distance'].count()
         infosr['samples_in_dataset_total_test'] = infosr['samples_in_dataset_src_test'] + infosr[
             'samples_in_dataset_trgt_test']
 
-        S_ball = S_test.loc[S['Distance'] <= ball_r]
         infosr['samples_in_ball_src_test'] = S_ball.loc[S_ball['C'].eq(info['SRC idx']), 'Distance'].count()
         infosr['samples_in_ball_trgt_test'] = S_ball.loc[S_ball['C'].eq(info['TRGT idx']), 'Distance'].count()
         infosr['samples_in_ball_total_test'] = infosr['samples_in_ball_trgt_test'] + infosr[
@@ -480,15 +481,17 @@ def func(info):
 
             infosr['accuracy_before_attack'] = accuracy_score
             infosr['1_minus_accuracy_before_attack'] = 1.0 - accuracy_score
+            infosr['epsilon'] = infosr['1_minus_accuracy_before_attack']
 
             # Just in ball
             S_test = deepcopy(samples_test[samples_test['C'] != 2])
-            S_test['Distance'] = get_distance(S_test, sa)
-            S_test = S_test.loc[S_test['Distance'] <= ball_r]
             Xt = S_test[['X', 'Y']]
             yt = S_test['C']
-            y_test_hat = clf_predict(clf, clf_tag, Xt)
-            accuracy_score = metrics.accuracy_score(yt, y_test_hat)
+            S_test['Distance'] = get_distance(Xt, sa)
+            S_test = S_test.sort_values(by=['Distance'], ascending=True)
+            S_ball = S_test.loc[S_test['Distance'] <= ball_r]
+            y_test_hat = clf_predict(clf, clf_tag, S_ball[['X', 'Y']])
+            accuracy_score = metrics.accuracy_score(S_ball['C'], y_test_hat)
 
             infosr['accuracy_before_attack_ball'] = accuracy_score
             infosr['1_minus_accuracy_before_attack_ball'] = 1.0 - accuracy_score
@@ -580,12 +583,19 @@ def func(info):
         # print("Prediction: {}".format(y_hat))
         infosr['prob_of_adv_for_TRGT_after_attack'] = y_hat[0][info['TRGT idx']]
 
-        get_accuracy_on_test_before_attack = True
-        if get_accuracy_on_test_before_attack:
-            y_test_hat = clf_predict(clf, clf_tag, X_test)
-            accuracy_score = metrics.accuracy_score(y_test, y_test_hat)
+        get_accuracy_on_test_after_attack = True
+        if get_accuracy_on_test_after_attack:
+            # Outside ball
+            S_test = deepcopy(samples_test[samples_test['C'] != 2])
+            S_test['Distance'] = get_distance(S_test, sa)
+            Xt = S_test[['X', 'Y']]
+            yt = S_test['C']
+            y_test_hat = clf_predict(clf, clf_tag, Xt)
+            accuracy_score = metrics.accuracy_score(yt, y_test_hat)
+
             infosr['accuracy_after_attack'] = accuracy_score
             infosr['1_minus_accuracy_after_attack'] = 1.0 - accuracy_score
+            infosr['epsilon_tag'] = infosr['1_minus_accuracy_after_attack']
 
             # Outside ball
             S_test = deepcopy(samples_test[samples_test['C'] != 2])
@@ -600,12 +610,13 @@ def func(info):
 
             # Just in ball
             S_test = deepcopy(samples_test[samples_test['C'] != 2])
-            S_test['Distance'] = get_distance(S_test, sa)
-            S_test = S_test.loc[S_test['Distance'] <= ball_r]
             Xt = S_test[['X', 'Y']]
             yt = S_test['C']
-            y_test_hat = clf_predict(clf, clf_tag, Xt)
-            accuracy_score = metrics.accuracy_score(yt, y_test_hat)
+            S_test['Distance'] = get_distance(Xt, sa)
+            S_test = S_test.sort_values(by=['Distance'], ascending=True)
+            S_ball = S_test.loc[S_test['Distance'] <= ball_r]
+            y_test_hat = clf_predict(clf, clf_tag, S_ball[['X', 'Y']])
+            accuracy_score = metrics.accuracy_score(S_ball['C'], y_test_hat)
 
             infosr['accuracy_after_attack_ball'] = accuracy_score
             infosr['1_minus_accuracy_after_attack_ball'] = 1.0 - accuracy_score
@@ -680,6 +691,9 @@ def func(info):
         print(tabulate(infodf, headers='keys', tablefmt='psql'))
         infodf.to_csv(outpath, header=True)
         print(f"Results in: {outpath}")
+
+        outpath = os.path.join(info['Outpath'], 'results_transpose.csv')
+        infodf.iloc[0].to_csv(outpath, header=True)
 
 
 def str2bool(s):
