@@ -490,8 +490,11 @@ def func(info):
             S_test['Distance'] = get_distance(Xt, sa)
             S_test = S_test.sort_values(by=['Distance'], ascending=True)
             S_ball = S_test.loc[S_test['Distance'] <= ball_r]
-            y_test_hat = clf_predict(clf, clf_tag, S_ball[['X', 'Y']])
-            accuracy_score = metrics.accuracy_score(S_ball['C'], y_test_hat)
+            if S_ball.shape[0] > 0:
+                y_test_hat = clf_predict(clf, clf_tag, S_ball[['X', 'Y']])
+                accuracy_score = metrics.accuracy_score(S_ball['C'], y_test_hat)
+            else:
+                accuracy_score = 1.0
 
             infosr['accuracy_before_attack_ball'] = accuracy_score
             infosr['1_minus_accuracy_before_attack_ball'] = 1.0 - accuracy_score
@@ -615,8 +618,11 @@ def func(info):
             S_test['Distance'] = get_distance(Xt, sa)
             S_test = S_test.sort_values(by=['Distance'], ascending=True)
             S_ball = S_test.loc[S_test['Distance'] <= ball_r]
-            y_test_hat = clf_predict(clf, clf_tag, S_ball[['X', 'Y']])
-            accuracy_score = metrics.accuracy_score(S_ball['C'], y_test_hat)
+            if S_ball.shape[0] > 0:
+                y_test_hat = clf_predict(clf, clf_tag, S_ball[['X', 'Y']])
+                accuracy_score = metrics.accuracy_score(S_ball['C'], y_test_hat)
+            else:
+                accuracy_score = 1.0
 
             infosr['accuracy_after_attack_ball'] = accuracy_score
             infosr['1_minus_accuracy_after_attack_ball'] = 1.0 - accuracy_score
