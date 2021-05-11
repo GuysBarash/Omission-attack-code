@@ -13,6 +13,13 @@ if __name__ == '__main__':
     crawler = FolderCrawler(path)
     crawler.scan()
     raw = crawler.get_raw()
+    raw['epsilon_tag+'] = raw['epsilon_tag']
+    raw['gamma_tag+epsilon'] = raw['gamma_tag'] + raw['epsilon']
+    raw['gamma_tag+epsilon-epsilon_tag'] = raw['gamma_tag+epsilon'] - raw['epsilon_tag']
+
+    csvpath = os.path.join(path, 'raw.csv')
+    print(f"Results: {csvpath}")
+    raw.to_csv(csvpath)
 
 if __name__ == '__main__':
     summary = raw.copy()
