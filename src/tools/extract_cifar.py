@@ -28,15 +28,30 @@ def unpickle(file):
     return dict
 
 
+def get_test_idx(labels):
+    arr = np.array(labels)
+    ret = dict()
+    for l in np.unique(arr):
+        idxs = np.where(arr == l)[0]
+        test_idxs = np.random.choice(idxs, int(np.floor(idxs.shape[0] * 0.1)), replace=False)
+        ret[l] = test_idxs
+    return ret
+
+
 src_path = r'C:\Users\32519\Downloads\cifar-10-python.tar\cifar-10-python\cifar-10-batches-py'
 f = [os.path.join(src_path, ft) for ft in os.listdir(src_path) if 'data_batch' in ft]
-trgt_path = r'C:\school\thesis\omission\CIFAR_FULL\train'
+trgt_path = r'C:\school\thesis\omission\CIFAR_FULL'
+train_path = r'C:\school\thesis\omission\CIFAR_FULL\train'
+test_path = r'C:\school\thesis\omission\CIFAR_FULL\test'
 counter = dict()
 clear_path(trgt_path)
 
+train_count = dict()
+test_count = dict()
 for fidx, ft in enumerate(f):
     d = unpickle(ft)
     imgs_count = len(d[b'labels'])
+    test_idxs = get_test_idx(d[b'labels'])
     for idx in tqdm(range(imgs_count), desc=f'Unzipping batch {fidx}'):
         label = d[b'labels'][idx]
         img = d[b'data'][idx]
@@ -46,7 +61,15 @@ for fidx, ft in enumerate(f):
 
         img_idx = counter.get(label, 0)
         counter[label] = img_idx + 1
-        path = os.path.join(trgt_path, str(label))
+        if idx in test_idxs[label]:
+            path = os.path.join(test_path, str(label))
+            test_count[label] = test_count.get(label, 0) + 1
+        else:
+            path = os.path.join(train_path, str(label))
+            train_count[label] = train_count.get(label, 0) + 1
         verify_path(path)
         img_name = os.path.join(path, f'{img_idx:04}.jpg')
         img.save(img_name, "JPEG")
+
+for k in train_count.keys():
+    print(f"[Label: {k}]Train: {train_count[k]}\tTest: {test_count[k]}")

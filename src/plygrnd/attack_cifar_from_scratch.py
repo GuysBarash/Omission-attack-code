@@ -12,6 +12,7 @@ import os
 import shutil
 import sys
 from datetime import datetime
+from tqdm import tqdm
 
 import numpy as np
 import pandas as pd
@@ -21,16 +22,20 @@ import torch.optim as optim
 import torchvision
 import torchvision.models as models
 import torchvision.transforms as transforms
+from pynvml import *
 from IPython.display import display
 from PIL import Image
 from tabulate import tabulate
 
+import argparse
+
 DEBUG_MODE = False
-learner_type = 'vgg11'
+learner_type = 'resnet18'
 knn_detector_type = 'googlenet'
-train_epocs = 50
-train_batch_size = 32
-random_seed_start_index = 1147
+thread_name = 'First'
+train_epocs = 70
+train_batch_size = 128
+random_seed_start_index = 1150
 experiments_to_run = 300
 
 
@@ -67,6 +72,34 @@ def accuracy(outputs, labels):
     t3 = t1 / t2
     t3 = torch.tensor(t3)
     return t3
+
+
+def clear_memory():
+    torch.cuda.empty_cache()
+    gc.collect()
+    with torch.no_grad():
+        torch.cuda.empty_cache()
+    gc.collect()
+
+
+def debug_memory(title=None, clear_mem=True):
+    # print("<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+    if title is not None:
+        # print(title)
+        pass
+
+    if torch.cuda.is_available():
+        nvmlInit()
+        h = nvmlDeviceGetHandleByIndex(0)
+        info = nvmlDeviceGetMemoryInfo(h)
+        free_mem = info.used
+        MB = 2 ** 20
+        msg = f'GPU Mem: {info.used/MB:,.1f}/{info.total/MB:,.1f} [{100 * float(info.used)/info.total:>.3f}%]'
+    else:
+        msg = 'No GPU. Running on CPU.'
+    # print(msg)
+
+    # print("<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
 
 
 class KNNDetector:
@@ -130,18 +163,20 @@ class KNNDetector:
         h.remove()
         embd = my_embedding[0, :, 0, 0]
 
+        del batch_t
         return embd.clone()
 
     def get_vectors(self, paths, batch_size=20):
         # 1. Load the image with Pillow library
         imgs_t = list()
-        for img_path in paths:
+        for img_path in tqdm(paths, total=len(paths), desc='KNNDetecor opening imgs'):
             with Image.open(img_path) as o_img:
                 imgs_t.append(self.transform(o_img))
 
         # 2. Create a PyTorch Variable with the transformed image
         ret = None
-        for batch_idx, batch_start_idx in enumerate(np.arange(0, len(imgs_t), batch_size)):
+        iterator = np.arange(0, len(imgs_t), batch_size)
+        for batch_idx, batch_start_idx in enumerate(tqdm(iterator, total=len(iterator), desc='Fetching embedding')):
             batch_end_idx = batch_start_idx + batch_size
             sub_img_t = imgs_t[batch_start_idx:batch_end_idx]
             tensor_t = torch.stack(sub_img_t)
@@ -168,16 +203,26 @@ class KNNDetector:
                 ret = embd.clone()
             else:
                 ret = torch.cat([ret.clone(), embd.clone()], 0)
+
+            del tensor_t
         return ret
 
     def get_similarities(self, src_path, imgs):
-        self.reset()
+        if DEBUG_MODE:
+            src_vec = torch.Tensor(np.random.normal(0, 1, 1024))
+            trgt_vectors = torch.Tensor(np.random.normal(0, 1, 1024 * len(imgs)).reshape((len(imgs), 1024)))
+        else:
+            self.reset()
+            src_vec = self.get_vector(src_path)
+            trgt_vectors = self.get_vectors(imgs)
 
-        src_vec = self.get_vector(src_path)
-        trgt_vectors = self.get_vectors(imgs)
         cos = nn.CosineSimilarity(dim=1, eps=1e-6)
         similarities = cos(src_vec.unsqueeze(0), trgt_vectors)
         return similarities
+
+    def __del__(self):
+        del self.model
+        self.model = None
 
 
 class Learner:
@@ -192,40 +237,30 @@ class Learner:
         self.class_to_idx = None
 
     def reset(self, seed=0, ):
-        torch.cuda.empty_cache()
+        clear_memory()
         torch.manual_seed(seed)
         np.random.seed(seed)
         num_classes = 10
         print(f"[Training using: {self.model_type}]")
 
         if self.model_type == 'resnet18':
-            self.model = models.resnet18(pretrained=True)
-            for param in self.model.parameters():
-                param.requires_grad = False
+            self.model = models.resnet18(pretrained=False)
             num_ftrs = self.model.fc.in_features
             self.model.fc = nn.Linear(num_ftrs, num_classes)
         elif self.model_type == 'alexnet':
-            self.model = models.alexnet(pretrained=True)
-            for param in self.model.parameters():
-                param.requires_grad = False
+            self.model = models.alexnet(pretrained=False)
             num_ftrs = self.model.classifier[6].in_features
             self.model.classifier[6] = nn.Linear(num_ftrs, num_classes)
         elif self.model_type == 'vgg11':
-            self.model = models.vgg11_bn(pretrained=True)
-            for param in self.model.parameters():
-                param.requires_grad = False
+            self.model = models.vgg11_bn(pretrained=False)
             num_ftrs = self.model.classifier[6].in_features
             self.model.classifier[6] = nn.Linear(num_ftrs, num_classes)
         elif self.model_type == 'squeezenet':
-            self.model = models.squeezenet1_0(pretrained=True)
-            for param in self.model.parameters():
-                param.requires_grad = False
+            self.model = models.squeezenet1_0(pretrained=False)
             self.model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1, 1), stride=(1, 1))
             self.model.num_classes = num_classes
         elif self.model_type == 'mobilenet_v2':
-            self.model = models.mobilenet_v2(pretrained=True)
-            for param in self.model.parameters():
-                param.requires_grad = False
+            self.model = models.mobilenet_v2(pretrained=False)
             num_ftrs = self.model.classifier[1].in_features
             self.model.classifier[1] = nn.Linear(num_ftrs, num_classes)
 
@@ -258,47 +293,63 @@ class Learner:
         train_time_start = datetime.now()
         print(f"[Train size: {len(traindata)}][Batch size: {batch_size}]")
         self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = optim.SGD(self.model.parameters(), lr=0.01, momentum=0.9)
+        lr_dict = {45: 0.01, 60: 0.001}
+        self.optimizer = optim.SGD(self.model.parameters(), lr=0.1, momentum=0.9)
         result_per_epoc = list()
         train_acc = 0.0
         train_loss = 0.0
         for epoch in range(epochs):
-            if epoch == 30:
+            debug_memory(f"Train epoc {epoch} START", clear_mem=True)
+
+            if epoch in lr_dict.keys():
                 for gopt in self.optimizer.param_groups:
-                    gopt['lr'] = 0.001
+                    gopt['lr'] = lr_dict[epoch]
             epoch_time_start = datetime.now()
 
-            for batch_idx, (images, labels) in enumerate(iter(traindata_loader)):
+            for batch_idx, (images, labels) in tqdm(enumerate(iter(traindata_loader)), total=len(traindata_loader)):
                 images = images.to(self.device)
                 labels = labels.to(self.device)
                 self.optimizer.zero_grad()
-                outputs = self.model(images)
+                try:
+                    outputs = self.model(images)
+                except Exception as e:
+                    debug_memory(f"On crash", clear_mem=True)
+                    print(f"Batch ID: {batch_idx}")
+                    raise e
                 loss = self.criterion(outputs, labels)
                 loss.backward()
                 self.optimizer.step()
 
                 train_accuracy = accuracy(outputs, labels)
                 train_acc += float(train_accuracy)
-                train_loss += float(loss)
+                train_loss += float(loss.item())
+
+                del images, labels, loss, outputs
+                clear_memory()
+            debug_memory(f"Train epoc {epoch} TRAIN", clear_mem=True)
             train_acc /= (batch_idx + 1)
             train_loss /= (batch_idx + 1)
 
             vld_acc = -1
             vld_loss = -1
-            if outputs is not None:
-                vld_acc = 0.0
-                vld_loss = 0.0
-                for batch_idx, (images, labels) in enumerate(iter(vlddata_loader)):
-                    images = images.to(self.device)
-                    labels = labels.to(self.device)
-                    outputs = self.model(images)
 
-                    vld_accuracy = accuracy(outputs, labels)
-                    loss = self.criterion(outputs, labels.long())
-                    vld_acc += float(vld_accuracy)
-                    vld_loss += float(loss)
-                vld_acc /= batch_idx + 1
-                vld_loss /= batch_idx + 1
+            vld_acc = 0.0
+            vld_loss = 0.0
+            for batch_idx, (images, labels) in enumerate(iter(vlddata_loader)):
+                images = images.to(self.device)
+                labels = labels.to(self.device)
+                outputs = self.model(images)
+
+                vld_accuracy = accuracy(outputs, labels)
+                loss = self.criterion(outputs, labels.long())
+                vld_acc += float(vld_accuracy)
+                vld_loss += float(loss)
+
+                del images, labels, outputs
+                clear_memory()
+            vld_acc /= batch_idx + 1
+            vld_loss /= batch_idx + 1
+            debug_memory(f"Train epoc {epoch} TEST", clear_mem=False)
 
             now_time = datetime.now()
             msg = ''
@@ -352,7 +403,6 @@ class Learner:
                 result_per_epoc.append(attack_success)
             print(msg)
 
-        torch.cuda.empty_cache()
         return results_dict, vld_acc, result_per_epoc
 
     def get_predictions(self, data_to_predict):
@@ -394,17 +444,18 @@ class DataOmittor:
     def __init__(self, workdir, dataset_source_dir, ommited_dir, transform,
                  full_test_dir, reduced_test_dir,
                  src_class=None, trgt_class=None,
+                 thread_name='',
                  ):
         self.workdir = workdir
         self.transform = transform
 
         self.train_source_dir = dataset_source_dir
 
-        self.adv_source_dir = os.path.join(self.workdir, 'adv')
+        self.adv_source_dir = os.path.join(self.workdir, f'adv_{thread_name}')
         self.adv_idx = -1
         self.adv = None
 
-        self.attacked_train_dir = os.path.join(self.workdir, 'train_current')
+        self.attacked_train_dir = os.path.join(self.workdir, f'train_current_{thread_name}')
         self.train_idxs = -1
         self.attacked_train = None
 
@@ -442,6 +493,13 @@ class DataOmittor:
             c_imgs = os.listdir(src_class_dir)
             c_imgs_path = [os.path.join(src_class_dir, img) for img in c_imgs]
             c_labels = [t_class] * len(c_imgs_path)
+
+            if DEBUG_MODE:
+                o_len = len(c_imgs)
+                n_len = int(0.1 * o_len)
+                c_imgs = c_imgs[:n_len]
+                c_labels = c_labels[:n_len]
+                c_imgs_path = c_imgs_path[:n_len]
 
             imgs += c_imgs
             imgs_path += c_imgs_path
@@ -506,7 +564,7 @@ class DataOmittor:
         self.attacked_train = self.main_map.loc[self.train_idxs].copy()
         self.omitted_train = self.main_map.loc[
             ~self.main_map.index.isin(np.concatenate(([self.adv_idx], self.train_idxs)))]
-        self.ommited_idxs = self.omitted_train.idx.values
+        # self.ommited_idxs = self.omitted_train.idx.values
         self.attacked_train['new path'] = 'X'
 
         clear_folder(self.attacked_train_dir, clear_if_exist=True)
@@ -523,15 +581,20 @@ class DataOmittor:
             shutil.copy(src, trgt)
             return trgt
 
-        for _, src in self.attacked_train.iterrows():
+        for _, src in tqdm(self.attacked_train.iterrows(), total=self.attacked_train.shape[0], desc='build_train_set'):
             src_path = src['path']
             trgt_path = os.path.join(self.attacked_train_dir, src['label'], src['img'])
             self.attacked_train.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
 
-        for _, src in self.omitted_train.iterrows():
+        for _, src in tqdm(self.omitted_train.iterrows(), total=self.omitted_train.shape[0], desc='build_omitted_set'):
             src_path = src['path']
-            trgt_path = os.path.join(self.ommited_dir, src['label'], src['img'])
-            self.omitted_train.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
+            if os.path.exists(src_path):
+                trgt_class_path = os.path.join(self.ommited_dir, src['label'])
+                clear_folder(trgt_class_path)
+                trgt_path = os.path.join(trgt_class_path, src['img'])
+                self.omitted_train.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
+            else:
+                j = 3
 
     def get_train_path(self):
         return self.attacked_train_dir
@@ -559,7 +622,7 @@ class DataOmittor:
             shutil.copy(src, trgt)
             return trgt
 
-        for row_idx, src in self.test_map.iterrows():
+        for row_idx, src in tqdm(self.test_map.iterrows(), total=len(self.test_map), desc="Build_test_set"):
             src_path = src['path']
             trgt_path = os.path.join(self.reduced_test_dir, src['label'], src['img'])
             self.test_map.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
@@ -572,7 +635,7 @@ class DataOmittor:
         return self.train_source_dir
 
 
-def experiment_instance(randomseed=0):
+def experiment_instance(randomseed=0, thread_name=''):
     import sys
 
     IN_COLAB = 'google.colab' in sys.modules
@@ -588,6 +651,7 @@ def experiment_instance(randomseed=0):
     torch.manual_seed(selected_random_seed)
     np.random.seed(selected_random_seed)
     print(f"Selected random seed: {selected_random_seed}")
+    print(f"Thread name: <{thread_name}>")
 
     img_shape = (256, 256)
     transform = transforms.Compose([
@@ -608,12 +672,12 @@ def experiment_instance(randomseed=0):
 
     # data_dir = os.path.join(work_dir, 'dogs_n_cats')
     print(f"File --> {__file__} --> {os.path.dirname(__file__)}")
-    data_dir = os.path.join(work_dir, 'CIFAR_reduced')
+    data_dir = os.path.join(work_dir, 'CIFAR_FULL')
     train_dir = os.path.join(data_dir, 'train')
-    omitted_dir = os.path.join(data_dir, 'omitted')
+    omitted_dir = os.path.join(data_dir, f'omitted_{thread_name}')
     test_dir = os.path.join(data_dir, 'test')
-    test_2_classes_dir = os.path.join(data_dir, 'test_reduced')
-    adv_dir = os.path.join(data_dir, 'adv')
+    test_2_classes_dir = os.path.join(data_dir, f'test_reduced_{thread_name}')
+    adv_dir = os.path.join(data_dir, f'adv_{thread_name}')
 
     clear_folder(work_dir)
     clear_folder(data_dir)
@@ -621,24 +685,24 @@ def experiment_instance(randomseed=0):
     clear_folder(test_dir)
     clear_folder(adv_dir)
     clear_folder(omitted_dir)
-
+    debug_memory('Section A-1')
     """Start"""
 
     omittor = DataOmittor(data_dir, train_dir, ommited_dir=omitted_dir,
                           full_test_dir=test_dir, reduced_test_dir=test_2_classes_dir,
-                          transform=transform)
+                          transform=transform, thread_name=thread_name)
     mapdf = omittor.get_map()
     print(f"SRC class: {omittor.src_class}")
     print(f"TRGT class: {omittor.trgt_class}")
 
     """Choose adversarial sample randomly"""
-
+    debug_memory('Section A-2')
     adv_idx = mapdf.loc[mapdf['label'].eq(omittor.src_class), 'idx'].sample(1).iloc[0]
     train_idx = mapdf.loc[~mapdf['idx'].eq(adv_idx), 'idx'].values
     print(f"Adversarial sample: {adv_idx}")
 
     """Make train set, no attack yet"""
-
+    debug_memory('Section A-3')
     omittor.make_adv(idx=adv_idx)
     omittor.make_train_set(train_idx=train_idx)
     omittor.make_test_set()
@@ -650,19 +714,19 @@ def experiment_instance(randomseed=0):
     img = img.resize(img_size, Image.ANTIALIAS)
     display(img)
 
-    """Results before omission"""
-
-    learner = Learner(transform, model_type=learner_type, src_clas=omittor.src_class, trgt_class=omittor.trgt_class)
-    results_before, vld_acc_before, result_per_epoc = learner.train(traindata=omittor.get_train_path(),
-                                                                    vlddata=omittor.get_test_path(),
-                                                                    advdata=omittor.get_adv_path(),
-                                                                    epochs=train_epocs,
-                                                                    batch_size=train_batch_size)
-    print("Scores before attack:")
-    print(pretty_print_dict(results_before))
+    # """Results before omission"""
+    #
+    # learner = Learner(transform, model_type=learner_type, src_clas=omittor.src_class, trgt_class=omittor.trgt_class)
+    # results_before, vld_acc_before, result_per_epoc = learner.train(traindata=omittor.get_train_path(),
+    #                                                                 vlddata=omittor.get_test_path(),
+    #                                                                 advdata=omittor.get_adv_path(),
+    #                                                                 epochs=train_epocs,
+    #                                                                 batch_size=train_batch_size)
+    # print("Scores before attack:")
+    # print(pretty_print_dict(results_before))
 
     """Omission"""
-
+    debug_memory('Section A-4')
     knn_detector = KNNDetector(transform, model_type=knn_detector_type)
     knndf = omittor.attacked_train.copy()
     print("Checking similarities")
@@ -670,10 +734,13 @@ def experiment_instance(randomseed=0):
                                           imgs=omittor.attacked_train['path'])
     knndf['similarities'] = simis
     knndf = knndf.sort_values(by=['similarities'], ascending=False)
-    budget = 25
+    budget = 500
     removal_method = 'K_per_class'
     idx_to_remove = list()
+    debug_memory('Section A-4 [before deletion]')
+
     del knn_detector
+    debug_memory('Section A-4 [After deletion]')
 
     if removal_method == 'K_per_class':
         # Remove samples from each class except src
@@ -708,6 +775,7 @@ def experiment_instance(randomseed=0):
     # display(HTML(idx_to_remove_df.to_html()))
     print(tabulate(idx_to_keep_df.head(40), headers='keys', tablefmt='psql'))
 
+    debug_memory('Section A-5')
     omittor.make_adv(idx=adv_idx)
     omittor.make_train_set(train_idx=idx_to_keep)
     print(f"Number of samples for training: {omittor.get_train_size()}")
@@ -719,6 +787,7 @@ def experiment_instance(randomseed=0):
         results_after[omittor.src_class] = 1.0
         vld_acc_after = 0.0
     else:
+        debug_memory('Section A-6')
         learner = Learner(transform, model_type=learner_type, src_clas=omittor.src_class, trgt_class=omittor.trgt_class)
         results_after, vld_acc_after, result_per_epoc = learner.train(
             traindata=omittor.get_train_path(),
@@ -727,20 +796,21 @@ def experiment_instance(randomseed=0):
             epochs=train_epocs,
             batch_size=train_batch_size,
         )
+        vld_acc_before = vld_acc_after
     print("Scores after attack:")
     print(pretty_print_dict(results_after))
 
     """Generate outputs"""
 
-    predicted_class_before_attack = max(results_before, key=results_before.get)
+    predicted_class_before_attack = 1.0  # max(results_before, key=results_before.get)
     predicted_class_after_attack = max(results_after, key=results_after.get)
     global_end_time = datetime.now()
     global_duration = global_end_time - global_start_time
     msg = ''
     msg += f'Random seed: {selected_random_seed}' + '\n'
     msg += f"Adversarial sample: {adv_idx}" + '\n'
-    for t_class, t_prob in results_before.items():
-        msg += f"prediction before {t_class}: {t_prob:>.3f}\n"
+    # for t_class, t_prob in results_before.items():
+    #     msg += f"prediction before {t_class}: {t_prob:>.3f}\n"
     msg += f'predicted class before: {predicted_class_before_attack}\n'
     for t_class, t_prob in results_after.items():
         msg += f"prediction after {t_class}: {t_prob:>.3f}\n"
@@ -766,6 +836,7 @@ def experiment_instance(randomseed=0):
     msg += '\n@'
 
     report_path = os.path.join(work_dir, f'Report_{selected_random_seed:>04}_{symbol}.txt')
+    print(f"Exporting results to {report_path}")
     with open(report_path, 'w+') as ffile:
         ffile.write(msg)
 
@@ -773,22 +844,35 @@ def experiment_instance(randomseed=0):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 1:
-        steps = experiments_to_run
-        start_seed = random_seed_start_index
-    elif len(sys.argv) == 2:
-        steps = 1
-        start_seed = int(sys.argv[1])
-    elif len(sys.argv) == 3:
-        steps = int(sys.argv[2])
-        start_seed = int(sys.argv[1])
-    else:
-        exit(2)
+    # if len(sys.argv) == 1:
+    #     steps = experiments_to_run
+    #     start_seed = random_seed_start_index
+    # elif len(sys.argv) == 2:
+    #     steps = 1
+    #     start_seed = int(sys.argv[1])
+    # elif len(sys.argv) == 3:
+    #     steps = int(sys.argv[2])
+    #     start_seed = int(sys.argv[1])
+    # else:
+    #     exit(2)
+
+    parser = argparse.ArgumentParser(description='From scratch')
+    parser.add_argument('--seed', type=int, default=1150, help='random seed')
+    parser.add_argument('--step', type=int, default=experiments_to_run, help='random seed step')
+    parser.add_argument('--name', default='leonardo', help='Instance name')
+    args = parser.parse_args()
+    start_seed = args.seed
+    thread_name = args.name
+    steps = args.step
 
 if __name__ == '__main__':
+    print("Running.")
+    print(f"Thread name: {thread_name}")
+    print(f"Seeds: {start_seed} --> {start_seed + steps}")
+    print(f"<>" * 20)
+    print("")
     for exp in range(start_seed, start_seed + steps):
-        torch.cuda.empty_cache()
-        experiment_instance(randomseed=exp)
-        gc.collect()
-        with torch.no_grad():
-            torch.cuda.empty_cache()
+        if DEBUG_MODE:
+            print("@@@@@@@@@@@@@@@ DEBUG MODE @@@@@@@@@@@@@@")
+        clear_memory()
+        experiment_instance(randomseed=exp, thread_name=thread_name)
