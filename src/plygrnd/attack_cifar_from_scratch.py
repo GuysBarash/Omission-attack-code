@@ -635,7 +635,7 @@ class DataOmittor:
         return self.train_source_dir
 
 
-def experiment_instance(randomseed=0, thread_name=''):
+def experiment_instance(randomseed=0, thread_name='', budget=500):
     import sys
 
     IN_COLAB = 'google.colab' in sys.modules
@@ -724,9 +724,11 @@ def experiment_instance(randomseed=0, thread_name=''):
     #                                                                 batch_size=train_batch_size)
     # print("Scores before attack:")
     # print(pretty_print_dict(results_before))
+    vld_acc_before = None
 
     """Omission"""
     debug_memory('Section A-4')
+    attack_time_start = datetime.now()
     knn_detector = KNNDetector(transform, model_type=knn_detector_type)
     knndf = omittor.attacked_train.copy()
     print("Checking similarities")
@@ -734,7 +736,6 @@ def experiment_instance(randomseed=0, thread_name=''):
                                           imgs=omittor.attacked_train['path'])
     knndf['similarities'] = simis
     knndf = knndf.sort_values(by=['similarities'], ascending=False)
-    budget = 500
     removal_method = 'K_per_class'
     idx_to_remove = list()
     debug_memory('Section A-4 [before deletion]')
@@ -767,6 +768,7 @@ def experiment_instance(randomseed=0, thread_name=''):
     all_idx = knndf.index.to_numpy()
     idx_to_keep = all_idx[~np.in1d(all_idx, idx_to_remove)]
     idx_to_keep_df = knndf.loc[idx_to_keep].sort_values(by=['similarities'], ascending=False)
+    attack_time_duration = datetime.now() - attack_time_start
 
     print(f"Removing: [Shape: {idx_to_remove_df.shape[0]}]")
     # display(HTML(idx_to_remove_df.to_html()))
@@ -788,6 +790,7 @@ def experiment_instance(randomseed=0, thread_name=''):
         vld_acc_after = 0.0
     else:
         debug_memory('Section A-6')
+        training_duration = datetime.now()
         learner = Learner(transform, model_type=learner_type, src_clas=omittor.src_class, trgt_class=omittor.trgt_class)
         results_after, vld_acc_after, result_per_epoc = learner.train(
             traindata=omittor.get_train_path(),
@@ -796,7 +799,9 @@ def experiment_instance(randomseed=0, thread_name=''):
             epochs=train_epocs,
             batch_size=train_batch_size,
         )
-        vld_acc_before = vld_acc_after
+        training_duration = datetime.now() - training_duration
+        if vld_acc_before is None:
+            vld_acc_before = vld_acc_after
     print("Scores after attack:")
     print(pretty_print_dict(results_after))
 
@@ -815,12 +820,16 @@ def experiment_instance(randomseed=0, thread_name=''):
     for t_class, t_prob in results_after.items():
         msg += f"prediction after {t_class}: {t_prob:>.3f}\n"
     msg += f'predicted class after: {predicted_class_after_attack}\n'
+    msg += f'Acc before: {vld_acc_before:>+.3f}' + '\n'
+    msg += f'Acc after: {vld_acc_after:>+.3f}' + '\n'
     msg += f'Acc drop: {vld_acc_before - vld_acc_after:>+.3f}' + '\n'
     msg += f'SRC class: {omittor.src_class}' + '\n'
     msg += f'TRGT class: {omittor.trgt_class}' + '\n'
     msg += f'Learner net: {learner_type}' + '\n'
     msg += f'knn net: {knn_detector_type}' + '\n'
-    msg += f'duration: {global_duration.total_seconds() :>.1f}' + '\n'
+    msg += f'Total duration: {global_duration.total_seconds() :>.1f}' + '\n'
+    msg += f'Attack duration: {attack_time_duration.total_seconds() :>.1f}' + '\n'
+    msg += f'Training duration: {training_duration.total_seconds() :>.1f}' + '\n'
     msg += f'Budget: {budget}' + '\n'
     msg += f'dataset size: {source_train_size}' + '\n'
     symbol = 'MISSINGSYMBOL'
@@ -832,7 +841,7 @@ def experiment_instance(randomseed=0, thread_name=''):
         symbol = 'X'
     else:
         msg += 'RES: OW'
-        symbol = 'M'
+        symbol = 'O'
     msg += '\n@'
 
     report_path = os.path.join(work_dir, f'Report_{selected_random_seed:>04}_{symbol}.txt')
@@ -860,10 +869,12 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=1150, help='random seed')
     parser.add_argument('--step', type=int, default=experiments_to_run, help='random seed step')
     parser.add_argument('--name', default='leonardo', help='Instance name')
+    parser.add_argument('--budget', type=int, default=500, help='budget per class')
     args = parser.parse_args()
     start_seed = args.seed
     thread_name = args.name
     steps = args.step
+    budget = args.budget
 
 if __name__ == '__main__':
     print("Running.")
@@ -875,4 +886,4 @@ if __name__ == '__main__':
         if DEBUG_MODE:
             print("@@@@@@@@@@@@@@@ DEBUG MODE @@@@@@@@@@@@@@")
         clear_memory()
-        experiment_instance(randomseed=exp, thread_name=thread_name)
+        experiment_instance(randomseed=exp, thread_name=thread_name, budget=budget)
