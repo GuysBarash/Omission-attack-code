@@ -29,7 +29,7 @@ from tabulate import tabulate
 
 import argparse
 
-DEBUG_MODE = False
+DEBUG_MODE = True
 learner_type = 'resnet18'
 knn_detector_type = 'googlenet'
 thread_name = 'First'
@@ -832,6 +832,7 @@ def experiment_instance(randomseed=0, thread_name='', budget=500):
     msg += f'Training duration: {training_duration.total_seconds() :>.1f}' + '\n'
     msg += f'Budget: {budget}' + '\n'
     msg += f'dataset size: {source_train_size}' + '\n'
+    msg += f'db size: {"FROM_SCRATCH"}' + '\n'
     symbol = 'MISSINGSYMBOL'
     if predicted_class_after_attack == omittor.trgt_class:
         msg += 'RES: WIN'

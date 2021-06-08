@@ -57,6 +57,11 @@ class FolderCrawler:
                 self.rawdata = pd.DataFrame(columns=sr.index, index=logfiles)
             self.rawdata.loc[fx] = sr
 
+        baseline_idxs = self.rawdata['Budget'].astype(int) == 0
+        self.baseline = self.rawdata[baseline_idxs]
+        self.rawdata = self.rawdata[~baseline_idxs]
+        baseline_accuracy = self.baseline['Acc after'].astype(float).mean()
+
         self.metadata = pd.Series(index=['Instances', 'Wins', 'win rate',
                                          'Accuracy', 'Accuracy std',
                                          'Budget', 'Dataset size',
@@ -69,6 +74,7 @@ class FolderCrawler:
         self.metadata['Budget'] = self.rawdata['Budget'].astype(int).mean()
         self.metadata['Accuracy'] = self.rawdata['Acc after'].astype(float).mean()
         self.metadata['Accuracy std'] = self.rawdata['Acc after'].astype(float).std()
+        self.metadata['Accuracy diff from baseline'] = baseline_accuracy - self.metadata['Accuracy']
         self.metadata['Dataset size'] = int(self.rawdata['dataset size'].astype(int).mean())
         self.metadata['Total duration'] = np.round(self.rawdata['Total duration'].mean() / 3600, 2)
         self.metadata['Training duration'] = np.round(self.rawdata['Training duration'].mean() / 3600, 2)
