@@ -749,7 +749,7 @@ def experiment_instance(randomseed=0, thread_name='', budget=500):
             if class_to_remove == omittor.trgt_class:
                 continue
             elif class_to_remove == omittor.src_class:
-                c_budget = 2 * budget
+                c_budget = budget
             else:
                 c_budget = budget
 

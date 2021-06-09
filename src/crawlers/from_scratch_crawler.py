@@ -45,7 +45,7 @@ class FolderCrawler:
             self.metadata_export_path = os.path.join(self.data_dir, 'metadata.csv')
 
         logfiles = [fs for fs in os.listdir(self.data_dir) if len(re.findall(r'Report_[0-9]+_[OVX].txt', fs)) > 0]
-        for fx in logfiles:
+        for fx in tqdm(logfiles, desc='Reading logs'):
             full_path = os.path.join(self.data_dir, fx)
             sr = self.extract(full_path)
             sr['file'] = fx
@@ -101,7 +101,7 @@ class FolderCrawler:
 
 
 if __name__ == '__main__':
-    path = r"C:\work\Rosetta\bug"
+    path = r"C:\school\thesis\vision_from_transfer_09062021"
     crawler = FolderCrawler(path)
     crawler.scan()
     raw = crawler.get_raw()
