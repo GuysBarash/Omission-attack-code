@@ -672,7 +672,7 @@ def experiment_instance(randomseed=0, thread_name='', budget=500):
 
     # data_dir = os.path.join(work_dir, 'dogs_n_cats')
     print(f"File --> {__file__} --> {os.path.dirname(__file__)}")
-    data_dir = os.path.join(work_dir, 'CIFAR_FULL')
+    data_dir = os.path.join(work_dir, 'TinyImageNet', 'imgnet_data')
     train_dir = os.path.join(data_dir, 'train')
     omitted_dir = os.path.join(data_dir, f'omitted_{thread_name}')
     test_dir = os.path.join(data_dir, 'test')
