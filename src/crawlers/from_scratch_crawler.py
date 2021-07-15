@@ -33,30 +33,40 @@ class FolderCrawler:
         self.rawdata_export_path = None
         self.metadata_export_path = None
 
-    def scan(self, data_dir=None, export=True, skip_if_exist=True):
+    def scan(self, data_dir=None, export=True, use_if_exists=True):
         if data_dir is not None:
             self.data_dir = data_dir
             self.rawdata = None
-            self.metadata = None
         if self.data_dir is None:
             raise Exception("No path was given. Please provide path either in init or in scan")
         else:
             self.rawdata_export_path = os.path.join(self.data_dir, 'rawdata.csv')
-            self.metadata_export_path = os.path.join(self.data_dir, 'metadata.csv')
 
-        logfiles = [fs for fs in os.listdir(self.data_dir) if len(re.findall(r'Report_[0-9]+_[OVX].txt', fs)) > 0]
-        for fx in tqdm(logfiles, desc='Reading logs'):
-            full_path = os.path.join(self.data_dir, fx)
-            sr = self.extract(full_path)
-            sr['file'] = fx
-            sr['path'] = full_path
-            sr['win'] = int(sr['RES'] == 'WIN')
-            sr['lose'] = int(sr['RES'] == 'LOSE')
+        if use_if_exists and os.path.exists(self.rawdata_export_path):
+            print("Raw data already exist, loading from memory")
+            self.rawdata = pd.read_csv(self.rawdata_export_path)
+        else:
+            logfiles = [fs for fs in os.listdir(self.data_dir) if len(re.findall(r'Report_[0-9].*\.txt', fs)) > 0]
+            for fx in tqdm(logfiles, desc='Reading logs'):
+                full_path = os.path.join(self.data_dir, fx)
+                sr = self.extract(full_path)
+                sr['file'] = fx
+                sr['path'] = full_path
+                sr['win'] = int(sr['RES'] == 'WIN')
+                sr['lose'] = int(sr['RES'] == 'LOSE')
 
-            if self.rawdata is None:
-                self.rawdata = pd.DataFrame(columns=sr.index, index=logfiles)
-            self.rawdata.loc[fx] = sr
+                if self.rawdata is None:
+                    self.rawdata = pd.DataFrame(columns=sr.index, index=logfiles)
+                self.rawdata.loc[fx] = sr
 
+            if export:
+                self.rawdata.to_csv(self.rawdata_export_path, index=0)
+                print("Run completed.")
+                print(f"Raw Data in: {self.data_dir}")
+
+        return None
+
+    def extract_metadata(self, export=True):
         baseline_idxs = self.rawdata['Budget'].astype(int) == 0
         self.baseline = self.rawdata[baseline_idxs]
         self.rawdata = self.rawdata[~baseline_idxs]
@@ -87,11 +97,8 @@ class FolderCrawler:
 
         if export:
             self.metadata.to_csv(self.metadata_export_path, header=True)
-            self.rawdata.to_csv(self.rawdata_export_path, index=0)
             print("Run completed.")
-            print(f"Data in: {self.data_dir}")
-
-        return None
+            print(f"MetaData in: {self.data_dir}")
 
     def get_raw(self):
         return self.rawdata
@@ -101,7 +108,8 @@ class FolderCrawler:
 
 
 if __name__ == '__main__':
-    path = r"C:\school\thesis\vision_from_transfer_09062021"
+    path = r"C:\school\thesis\vision_transfer_budgets_13032021"
     crawler = FolderCrawler(path)
     crawler.scan()
     raw = crawler.get_raw()
+    j = 3

@@ -3,6 +3,7 @@
 *.png
 *.csv
 *.jpg
+*.jpeg
 *.xml
 *.iml
 *.json
@@ -33,3 +34,4 @@ results_23/
 results_24/
 results_25/
 results_26/
+*.h5
