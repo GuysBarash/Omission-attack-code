@@ -16,14 +16,28 @@ class FolderCrawler:
             ls = l.split('\n')[:-1]
             sr = pd.Series()
             for ls_item in ls:
-                k, v = ls_item.split(':')
-                v = re.sub(r'\s', '', v)
-                if k == 'Attack duration' and k in sr:
-                    k = 'Training duration'
-                if 'duration' in k:
-                    v = float(v)
+                if re.findall(r'[a-zA-Z0-9]+Adversarial', ls_item):
+                    split_pos = re.search('Adversarial', ls_item).start()
+                    items = [ls_item[:split_pos], ls_item[split_pos:]]
+                    for citem in items:
+                        k, v = citem.split(':')
+                        v = re.sub(r'\s', '', v)
+                        if k == 'Attack duration' and k in sr:
+                            k = 'Training duration'
+                        if 'duration' in k:
+                            v = float(v)
 
-                sr[k] = v
+                        sr[k] = v
+
+                else:
+                    k, v = ls_item.split(':')
+                    v = re.sub(r'\s', '', v)
+                    if k == 'Attack duration' and k in sr:
+                        k = 'Training duration'
+                    if 'duration' in k:
+                        v = float(v)
+
+                    sr[k] = v
         return sr
 
     def __init__(self, data_dir=None):
@@ -108,7 +122,7 @@ class FolderCrawler:
 
 
 if __name__ == '__main__':
-    path = r"C:\school\thesis\vision_transfer_budgets_13032021"
+    path = r"C:\school\thesis\vision_from_scratch_imgnet_01082021"
     crawler = FolderCrawler(path)
     crawler.scan()
     raw = crawler.get_raw()

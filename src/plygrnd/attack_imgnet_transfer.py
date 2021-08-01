@@ -29,12 +29,12 @@ from tabulate import tabulate
 
 import argparse
 
-DEBUG_MODE = False
+DEBUG_MODE = True
 learner_type = 'resnet18'
 knn_detector_type = 'googlenet'
 thread_name = 'First'
 train_epocs = 35
-train_batch_size = 32
+train_batch_size = 64
 random_seed_start_index = 1150
 experiments_to_run = 300
 
@@ -253,23 +253,33 @@ class Learner:
         print(f"[Training using: {self.model_type}]")
 
         if self.model_type == 'resnet18':
-            self.model = models.resnet18(pretrained=False)
+            self.model = models.resnet18(pretrained=True)
+            for param in self.model.parameters():
+                param.requires_grad = False
             num_ftrs = self.model.fc.in_features
             self.model.fc = nn.Linear(num_ftrs, num_classes)
         elif self.model_type == 'alexnet':
-            self.model = models.alexnet(pretrained=False)
+            self.model = models.alexnet(pretrained=True)
+            for param in self.model.parameters():
+                param.requires_grad = False
             num_ftrs = self.model.classifier[6].in_features
             self.model.classifier[6] = nn.Linear(num_ftrs, num_classes)
         elif self.model_type == 'vgg11':
-            self.model = models.vgg11_bn(pretrained=False)
+            self.model = models.vgg11_bn(pretrained=True)
+            for param in self.model.parameters():
+                param.requires_grad = False
             num_ftrs = self.model.classifier[6].in_features
             self.model.classifier[6] = nn.Linear(num_ftrs, num_classes)
         elif self.model_type == 'squeezenet':
-            self.model = models.squeezenet1_0(pretrained=False)
+            self.model = models.squeezenet1_0(pretrained=True)
+            for param in self.model.parameters():
+                param.requires_grad = False
             self.model.classifier[1] = nn.Conv2d(512, num_classes, kernel_size=(1, 1), stride=(1, 1))
             self.model.num_classes = num_classes
         elif self.model_type == 'mobilenet_v2':
-            self.model = models.mobilenet_v2(pretrained=False)
+            self.model = models.mobilenet_v2(pretrained=True)
+            for param in self.model.parameters():
+                param.requires_grad = False
             num_ftrs = self.model.classifier[1].in_features
             self.model.classifier[1] = nn.Linear(num_ftrs, num_classes)
 
@@ -451,7 +461,9 @@ class Learner:
 
 class DataOmittor:
     def __init__(self, workdir, dataset_source_dir, ommited_dir, transform,
-                 full_test_dir, reduced_test_dir,
+                 full_test_dir,
+                 reduced_train_dir,
+                 reduced_test_dir,
                  src_class=None, trgt_class=None,
                  thread_name='',
                  ):
@@ -459,6 +471,7 @@ class DataOmittor:
         self.transform = transform
 
         self.train_source_dir = dataset_source_dir
+        self.reduced_train_dir = reduced_train_dir
 
         self.adv_source_dir = os.path.join(self.workdir, f'adv_{thread_name}')
         self.adv_idx = -1
@@ -479,18 +492,40 @@ class DataOmittor:
         clear_folder(self.adv_source_dir, clear_if_exist=True)
         clear_folder(self.ommited_dir, clear_if_exist=True)
         clear_folder(self.reduced_test_dir, clear_if_exist=True)
+        clear_folder(self.reduced_train_dir, clear_if_exist=True)
 
+        self.reduce_datasets()
         self.uid = 0
 
-        self.main_dataset = torchvision.datasets.ImageFolder(self.train_source_dir, transform=transform)
+        self.main_dataset = torchvision.datasets.ImageFolder(self.reduced_train_dir, transform=transform)
         self.known_labels = self.main_dataset.classes
         self.src_class = src_class
         self.trgt_class = trgt_class
         if self.src_class not in self.known_labels or self.trgt_class not in self.known_labels:
             self.src_class, self.trgt_class = np.random.choice(self.known_labels, 2, replace=False)
 
-        self.main_map = self.map_dataset(self.train_source_dir)
-        self.test_map = self.map_dataset(self.full_test_dir)
+        self.main_map = self.map_dataset(self.reduced_train_dir)
+        self.test_map = self.map_dataset(self.reduced_test_dir)
+
+    def reduce_datasets(self, labels_count=10, samples_per_label=200):
+        all_labels = os.listdir(self.train_source_dir)
+        reduced_labels = np.random.choice(all_labels, size=labels_count)
+
+        for l in tqdm(reduced_labels, desc='Copying subset for transfer'):
+            train_src = os.path.join(self.train_source_dir, l)
+            train_trgt = os.path.join(self.reduced_train_dir, l)
+            shutil.copytree(train_src, train_trgt)
+
+            samples = os.listdir(train_trgt)
+            samples_to_remove_count = len(samples) - samples_per_label
+            samples_to_remove = np.random.choice(samples, samples_to_remove_count, replace=False)
+            for f in samples_to_remove:
+                fp = os.path.join(train_trgt, f)
+                os.remove(fp)
+
+            test_src = os.path.join(self.full_test_dir, l)
+            test_trgt = os.path.join(self.reduced_test_dir, l)
+            shutil.copytree(test_src, test_trgt)
 
     def map_dataset(self, dataset_path):
         classes = os.listdir(dataset_path)
@@ -623,21 +658,21 @@ class DataOmittor:
     # Test dataset
 
     def make_test_set(self):
-        self.test_map['new path'] = None
+        self.test_map['new path'] = self.test_map['path']
 
-        clear_folder(self.reduced_test_dir, clear_if_exist=True)
-        for c_class in self.test_map['label'].unique():
-            ppath = os.path.join(self.reduced_test_dir, c_class)
-            clear_folder(ppath, clear_if_exist=True)
-
-        def _move_sample(src, trgt):
-            shutil.copy(src, trgt)
-            return trgt
-
-        for row_idx, src in tqdm(self.test_map.iterrows(), total=len(self.test_map), desc="Build_test_set"):
-            src_path = src['path']
-            trgt_path = os.path.join(self.reduced_test_dir, src['label'], src['img'])
-            self.test_map.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
+        # clear_folder(self.reduced_test_dir, clear_if_exist=True)
+        # for c_class in self.test_map['label'].unique():
+        #     ppath = os.path.join(self.reduced_test_dir, c_class)
+        #     clear_folder(ppath, clear_if_exist=True)
+        #
+        # def _move_sample(src, trgt):
+        #     shutil.copy(src, trgt)
+        #     return trgt
+        #
+        # for row_idx, src in tqdm(self.test_map.iterrows(), total=len(self.test_map), desc="Build_test_set"):
+        #     src_path = src['path']
+        #     trgt_path = os.path.join(self.reduced_test_dir, src['label'], src['img'])
+        #     self.test_map.loc[src['idx'], 'new path'] = _move_sample(src_path, trgt_path)
 
     def get_test_path(self):
         return self.reduced_test_dir
@@ -689,12 +724,11 @@ def experiment_instance(randomseed=0, thread_name='', budget=500):
     # data_dir = os.path.join(work_dir, 'dogs_n_cats')
     print(f"File --> {__file__} --> {os.path.dirname(__file__)}")
     data_dir = os.path.join(work_dir, 'imgnet')
-    if DEBUG_MODE:
-        data_dir = os.path.join(work_dir, 'imgnet_reduced')
     train_dir = os.path.join(data_dir, 'train')
+    train_dir_transfered = os.path.join(data_dir, f'train_reduced_{thread_name}')
     omitted_dir = os.path.join(data_dir, f'omitted_{thread_name}')
     test_dir = os.path.join(data_dir, 'test')
-    test_2_classes_dir = os.path.join(data_dir, f'test_reduced_{thread_name}')
+    test_dir_transfered = os.path.join(data_dir, f'test_reduced_{thread_name}')
     adv_dir = os.path.join(data_dir, f'adv_{thread_name}')
 
     clear_folder(work_dir)
@@ -708,9 +742,13 @@ def experiment_instance(randomseed=0, thread_name='', budget=500):
 
     info_db['TRAIN_ORIGINAL_PATH'] = train_dir
     info_db['TEST_ORIGINAL_PATH'] = test_dir
-    omittor = DataOmittor(data_dir, train_dir, ommited_dir=omitted_dir,
-                          full_test_dir=test_dir, reduced_test_dir=test_2_classes_dir,
-                          transform=transform, thread_name=thread_name)
+    omittor = DataOmittor(data_dir, train_dir,
+                          ommited_dir=omitted_dir,
+                          full_test_dir=test_dir,
+                          reduced_train_dir=train_dir_transfered,
+                          reduced_test_dir=test_dir_transfered,
+                          transform=transform,
+                          thread_name=thread_name)
     mapdf = omittor.get_map()
     print(f"SRC class: {omittor.src_class}")
     print(f"TRGT class: {omittor.trgt_class}")
@@ -836,7 +874,7 @@ def experiment_instance(randomseed=0, thread_name='', budget=500):
     global_duration = global_end_time - global_start_time
     msg = ''
     msg += f'Random seed: {selected_random_seed}' + '\n'
-    msg += f'Thread name: {thread_name}' + '\n'
+    msg += f'Thread name: {thread_name}'
     msg += f"Adversarial sample: {adv_idx}" + '\n'
     # for t_class, t_prob in results_before.items():
     #     msg += f"prediction before {t_class}: {t_prob:>.3f}\n"
@@ -859,7 +897,7 @@ def experiment_instance(randomseed=0, thread_name='', budget=500):
     msg += f'Budget: {budget}' + '\n'
     msg += f'dataset size original: {source_train_size}' + '\n'
     msg += f'dataset size after attack: {info_db["train_samples_count_final"]}' + '\n'
-    msg += f'db size: {"FROM_SCRATCH"}' + '\n'
+    msg += f'db size: {"TRANSFER"}' + '\n'
     symbol = 'MISSINGSYMBOL'
     if predicted_class_after_attack == omittor.trgt_class:
         msg += 'RES: WIN'
@@ -897,7 +935,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=1150, help='random seed')
     parser.add_argument('--step', type=int, default=experiments_to_run, help='random seed step')
     parser.add_argument('--name', default='leonardo', help='Instance name')
-    parser.add_argument('--budget', type=int, default=50, help='budget per class')
+    parser.add_argument('--budget', type=int, default=20, help='budget per class')
     args = parser.parse_args()
     start_seed = args.seed
     thread_name = args.name
