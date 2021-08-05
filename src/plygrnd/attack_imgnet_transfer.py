@@ -117,6 +117,7 @@ class KNNDetector:
         self.model_type = model_type
 
     def reset(self):
+        print(f"Knn model used: {self.model_type}")
         if self.model_type == 'alexnet':
             self.model = models.alexnet(pretrained=True)
             self.layer = self.model._modules.get('avgpool')
@@ -509,7 +510,7 @@ class DataOmittor:
 
     def reduce_datasets(self, labels_count=10, samples_per_label=200):
         all_labels = os.listdir(self.train_source_dir)
-        reduced_labels = np.random.choice(all_labels, size=labels_count)
+        reduced_labels = np.random.choice(all_labels, size=labels_count, replace=False)
 
         for l in tqdm(reduced_labels, desc='Copying subset for transfer'):
             train_src = os.path.join(self.train_source_dir, l)
@@ -703,6 +704,8 @@ def experiment_instance(randomseed=0, thread_name='', budget=500):
     print(f"Selected random seed: {selected_random_seed}")
     print(f"Thread name: <{thread_name}>")
     print(f"Batch size: <{train_batch_size}>")
+    print(f"Surrogate: <{knn_detector_type}>")
+    print(f"Victim: <{learner_type}>")
 
     img_shape = (256, 256)
     transform = transforms.Compose([
@@ -935,12 +938,16 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=1150, help='random seed')
     parser.add_argument('--step', type=int, default=experiments_to_run, help='random seed step')
     parser.add_argument('--name', default='leonardo', help='Instance name')
-    parser.add_argument('--budget', type=int, default=20, help='budget per class')
+    parser.add_argument('--budget', type=int, default=25, help='budget per class')
+    parser.add_argument('--victim', type=str, default='resnet18', help='network being attacked')
+    parser.add_argument('--attacked', type=str, default='googlenet', help='network for KNN attack')
     args = parser.parse_args()
     start_seed = args.seed
     thread_name = args.name
     steps = args.step
     budget = args.budget
+    learner_type = args.victim
+    knn_detector_type = args.attacked
 
 if __name__ == '__main__':
     print("Running.")

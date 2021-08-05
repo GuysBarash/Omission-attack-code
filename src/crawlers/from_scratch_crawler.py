@@ -122,7 +122,7 @@ class FolderCrawler:
 
 
 if __name__ == '__main__':
-    path = r"C:\school\thesis\vision_from_scratch_imgnet_01082021"
+    path = r"C:\school\thesis\vision_from_transfer_imgnet_02082021"
     crawler = FolderCrawler(path)
     crawler.scan()
     raw = crawler.get_raw()
