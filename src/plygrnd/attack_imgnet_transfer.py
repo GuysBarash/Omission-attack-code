@@ -29,12 +29,12 @@ from tabulate import tabulate
 
 import argparse
 
-DEBUG_MODE = True
+DEBUG_MODE = False
 learner_type = 'resnet18'
 knn_detector_type = 'googlenet'
 thread_name = 'First'
 train_epocs = 35
-train_batch_size = 64
+train_batch_size = 128
 random_seed_start_index = 1150
 experiments_to_run = 300
 
